@@ -1,11 +1,9 @@
 use crate::models::RawTransactionFromDb;
-use crate::GetPoolPostgresSqlx;
 use anyhow::Result;
 use sqlx::postgres::PgArguments;
-use sqlx::Arguments;
+use sqlx::{Arguments, PgPool};
 use sqlx::{Postgres, Row, Transaction};
 use std::cmp::Ordering;
-use std::sync::Arc;
 use itertools::Itertools;
 
 const INSERT_RAW_TRANSACTION_QUERY: &str = "INSERT INTO raw_transactions (transaction, transaction_hash, timestamp_block, timestamp_lt, processed) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING";
@@ -36,7 +34,7 @@ const CREATE_INDEX_RAW_TRANSACTIONS_QUERY: &str = "CREATE INDEX IF NOT EXISTS ra
 
 pub async fn new_raw_transaction(
     raw_transaction: RawTransactionFromDb,
-    sqlx_client: &Arc<impl GetPoolPostgresSqlx>,
+    pg_pool: &PgPool,
 ) -> Result<()> {
     let mut args = PgArguments::default();
     args.add(raw_transaction.transaction);
@@ -46,7 +44,7 @@ pub async fn new_raw_transaction(
     args.add(raw_transaction.processed);
 
     sqlx::query_with(INSERT_RAW_TRANSACTION_QUERY, args)
-        .execute(sqlx_client.get_pool())
+        .execute(pg_pool)
         .await?;
 
     Ok(())
@@ -84,9 +82,9 @@ pub async fn get_raw_transactions(
         .map_err(anyhow::Error::new)
 }
 
-pub async fn get_count_raw_transactions(sqlx_client: &Arc<impl GetPoolPostgresSqlx>) -> i64 {
+pub async fn get_count_raw_transactions(pg_pool: &PgPool) -> i64 {
     let count: i64 = sqlx::query(COUNT_RAW_TRANSACTION_QUERY)
-        .fetch_one(sqlx_client.get_pool())
+        .fetch_one(pg_pool)
         .await
         .map(|x| x.get(0))
         .unwrap_or_default();
@@ -94,16 +92,16 @@ pub async fn get_count_raw_transactions(sqlx_client: &Arc<impl GetPoolPostgresSq
     count
 }
 
-pub async fn create_table_raw_transactions(sqlx_client: &Arc<impl GetPoolPostgresSqlx>) {
+pub async fn create_table_raw_transactions(pg_pool: &PgPool) {
     if let Err(e) = sqlx::query(CREATE_TABLE_RAW_TRANSACTIONS_QUERY)
-        .execute(sqlx_client.get_pool())
+        .execute(pg_pool)
         .await
     {
         log::error!("create table raw_transactions ERROR {}", e);
     }
 
     if let Err(e) = sqlx::query(CREATE_INDEX_RAW_TRANSACTIONS_QUERY)
-        .execute(sqlx_client.get_pool())
+        .execute(pg_pool)
         .await
     {
         log::error!("create index raw_transactions ERROR {}", e);

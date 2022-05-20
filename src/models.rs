@@ -1,6 +1,45 @@
 use anyhow::Context;
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
+use indexer_lib::{AnyExtractable, AnyExtractableOutput, ParsedOutput};
+use sqlx::PgPool;
+use std::sync::Arc;
+use tokio::sync::Notify;
 use ton_block::{Deserializable, GetRepresentationHash, Serializable, Transaction};
 use ton_types::UInt256;
+use transaction_consumer::TransactionConsumer;
+
+pub struct BufferedConsumerConfig {
+    pub timestamp_sync: i32,
+    pub delay: i32,
+    pub transaction_consumer: Arc<TransactionConsumer>,
+    pub pg_pool: PgPool,
+    pub events_to_parse: Vec<AnyExtractable>,
+}
+
+impl BufferedConsumerConfig {
+    pub fn new(
+        timestamp_sync: i32,
+        delay: i32,
+        transaction_consumer: Arc<TransactionConsumer>,
+        pg_pool: PgPool,
+        events_to_parse: Vec<AnyExtractable>,
+    ) -> Self {
+        Self {
+            timestamp_sync,
+            delay,
+            transaction_consumer,
+            pg_pool,
+            events_to_parse,
+        }
+    }
+}
+
+pub struct BuffedParserChannels {
+    pub rx_parsed_events:
+        UnboundedReceiver<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
+    pub tx_commit: UnboundedSender<()>,
+    pub notify_for_services: Arc<Notify>,
+}
 
 #[derive(Debug, Clone)]
 pub struct RawTransactionFromDb {

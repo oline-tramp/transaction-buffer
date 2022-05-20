@@ -1,12 +1,11 @@
 pub mod models;
 mod sqlx_client;
 
-use crate::models::RawTransaction;
+use crate::models::{BuffedParserChannels, BufferedConsumerConfig, RawTransaction};
 use crate::sqlx_client::{
     create_table_raw_transactions, get_count_raw_transactions, get_raw_transactions,
     new_raw_transaction,
 };
-use async_trait::async_trait;
 use chrono::Utc;
 use futures::channel::mpsc;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -22,57 +21,11 @@ use tokio::sync::Notify;
 use tokio::time::sleep;
 use ton_block::{GetRepresentationHash, Transaction};
 use ton_types::UInt256;
-use transaction_consumer::TransactionConsumer;
-
-#[async_trait]
-pub trait GetPoolPostgresSqlx {
-    fn get_pool(&self) -> &PgPool;
-}
-
-struct BufferedTransactionConsumer {
-    tx_consumer: TransactionConsumer,
-    sqlx_client: PgPool,
-    config: Config,
-}
-
-struct Config {
-    delay: Duration,
-}
-
-impl BufferedTransactionConsumer {
-    pub fn new(sqlx_client: PgPool, config: Config, consumer: TransactionConsumer) -> Arc<Self> {
-        Arc::new(Self {
-            tx_consumer: consumer,
-            sqlx_client,
-            config,
-        })
-    }
-
-    pub fn spawn_listener(self: &Arc<Self>) -> ListenerHandle {
-        let (tx, rx) = mpsc::channel(128);
-    }
-}
-
-struct ListenerHandle {}
-
-impl ListenerHandle {
-    pub fn stream(&self) -> UnboundedReceiver<RawTransaction> {
-        unimplemented!()
-    }
-}
 
 #[allow(clippy::type_complexity)]
 pub fn start_parsing_and_get_channels(
-    transaction_consumer: Arc<TransactionConsumer>,
-    sqlx_client: Arc<impl GetPoolPostgresSqlx + std::marker::Send + std::marker::Sync + 'static>,
-    timestamp_sync: i32,
-    events_to_parse: Vec<AnyExtractable>,
-    secs_delay_from_db: i32,
-) -> (
-    UnboundedReceiver<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
-    UnboundedSender<()>,
-    Arc<Notify>,
-) {
+    config: BufferedConsumerConfig
+) -> BuffedParserChannels {
     let (tx_parsed_events, rx_parsed_events) = mpsc::unbounded();
     let (tx_commit, rx_commit) = mpsc::unbounded();
     let notify_for_services = Arc::new(Notify::new());
@@ -80,35 +33,31 @@ pub fn start_parsing_and_get_channels(
     {
         let notify_for_services = notify_for_services.clone();
         tokio::spawn(parse_kafka_transactions(
-            transaction_consumer,
-            sqlx_client,
-            timestamp_sync,
+            config,
             tx_parsed_events,
-            events_to_parse,
             notify_for_services,
-            secs_delay_from_db,
             rx_commit,
         ));
     }
-    (rx_parsed_events, tx_commit, notify_for_services)
+    BuffedParserChannels {
+        rx_parsed_events,
+        tx_commit,
+        notify_for_services,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn parse_kafka_transactions(
-    transaction_consumer: Arc<TransactionConsumer>,
-    sqlx_client: Arc<impl GetPoolPostgresSqlx + std::marker::Send + std::marker::Sync + 'static>,
-    timestamp_sync: i32,
+    config: BufferedConsumerConfig,
     tx_parsed_events: UnboundedSender<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
-    events_to_parse: Vec<AnyExtractable>,
     notify_for_services: Arc<Notify>,
-    secs_delay_from_db: i32,
     commit_rx: UnboundedReceiver<()>,
 ) {
-    create_table_raw_transactions(&sqlx_client).await;
+    create_table_raw_transactions(&config.pg_pool).await;
 
-    let reset = get_count_raw_transactions(&sqlx_client).await == 0;
+    let reset = get_count_raw_transactions(&config.pg_pool).await == 0;
 
-    let mut stream_transactions = transaction_consumer
+    let mut stream_transactions = config.transaction_consumer
         .stream_transactions(reset)
         .await
         .expect("cant get stream transactions");
@@ -118,22 +67,22 @@ async fn parse_kafka_transactions(
     while let Some(produced_transaction) = stream_transactions.next().await {
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_time = transaction.time() as i32;
-        if extract_events(&transaction, transaction.hash().unwrap(), &events_to_parse).is_some() {
-            new_raw_transaction(transaction.into(), &sqlx_client)
+        if extract_events(&transaction, transaction.hash().unwrap(), &config.events_to_parse).is_some() {
+            new_raw_transaction(transaction.into(), &config.pg_pool)
                 .await
                 .expect("cant insert raw_transaction to db");
         }
-        if transaction_time - timestamp_sync > 0 {
+        if transaction_time - config.timestamp_sync > 0 {
             produced_transaction.commit().unwrap();
-            let sqlx_client = sqlx_client.clone();
-            let events = events_to_parse.clone();
+            let pg_pool = config.pg_pool.clone();
+            let events = config.events_to_parse.clone();
             tokio::spawn(parse_raw_transaction(
                 events,
                 tx_parsed_events,
                 notify_for_services,
-                timestamp_sync,
-                sqlx_client,
-                secs_delay_from_db,
+                config.timestamp_sync,
+                pg_pool,
+                config.delay,
                 commit_rx,
             ));
             break;
@@ -149,8 +98,8 @@ async fn parse_kafka_transactions(
     while let Some(produced_transaction) = stream_transactions.next().await {
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_timestamp = transaction.now;
-        if extract_events(&transaction, transaction.hash().unwrap(), &events_to_parse).is_some() {
-            new_raw_transaction(transaction.into(), &sqlx_client)
+        if extract_events(&transaction, transaction.hash().unwrap(), &config.events_to_parse).is_some() {
+            new_raw_transaction(transaction.into(), &config.pg_pool)
                 .await
                 .expect("cant insert raw_transaction to db");
         }
@@ -171,7 +120,7 @@ async fn parse_raw_transaction(
     mut tx: UnboundedSender<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
     notify: Arc<Notify>,
     timestamp_sync: i32,
-    sqlx_client: Arc<impl GetPoolPostgresSqlx + std::marker::Send + std::marker::Sync + 'static>,
+    pg_pool: PgPool,
     secs_delay: i32,
     mut commit_rx: UnboundedReceiver<()>,
 ) {
@@ -180,8 +129,7 @@ async fn parse_raw_transaction(
     loop {
         let timestamp_now = Utc::now().timestamp() as i32;
 
-        let mut begin = sqlx_client
-            .get_pool()
+        let mut begin = pg_pool
             .begin()
             .await
             .expect("cant get pg transaction");
@@ -241,3 +189,38 @@ pub fn extract_events(
     .ok()
     .flatten()
 }
+
+// struct BufferedTransactionConsumer {
+//     tx_consumer: TransactionConsumer,
+//     sqlx_client: PgPool,
+//     config: Config,
+//     notify: Arc<Notify>,
+// }
+//
+// struct Config {
+//     delay: Duration,
+//     sync_timestamp: i32,
+// }
+//
+// impl BufferedTransactionConsumer {
+//     pub fn new(sqlx_client: PgPool, config: Config, consumer: TransactionConsumer, notify: Arc<Notify>) -> Arc<Self> {
+//         Arc::new(Self {
+//             tx_consumer: consumer,
+//             sqlx_client,
+//             config,
+//             notify
+//         })
+//     }
+//
+//     pub fn spawn_listener(self: &Arc<Self>) -> ListenerHandle {
+//         let (tx, rx) = mpsc::channel(128);
+//     }
+// }
+//
+// struct ListenerHandle {}
+//
+// impl ListenerHandle {
+//     pub fn stream(&self) -> UnboundedReceiver<RawTransaction> {
+//         unimplemented!()
+//     }
+// }
