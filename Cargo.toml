@@ -18,7 +18,6 @@ ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 futures = { version = "0.3" }
 indexer-lib = { git = "https://github.com/broxus/legacy-node-indexer" }
 sqlx = { version = "0.5", features = ["runtime-tokio-native-tls", "postgres", "uuid", "bigdecimal", "offline", "chrono", "json"] }
-ton_abi = { git = "https://github.com/broxus/ton-labs-abi" }
 
 [dev-dependencies]
 env_logger = "0.8.4"

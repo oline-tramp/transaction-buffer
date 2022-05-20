@@ -29,6 +29,38 @@ pub trait GetPoolPostgresSqlx {
     fn get_pool(&self) -> &PgPool;
 }
 
+struct BufferedTransactionConsumer {
+    tx_consumer: TransactionConsumer,
+    sqlx_client: PgPool,
+    config: Config,
+}
+
+struct Config {
+    delay: Duration,
+}
+
+impl BufferedTransactionConsumer {
+    pub fn new(sqlx_client: PgPool, config: Config, consumer: TransactionConsumer) -> Arc<Self> {
+        Arc::new(Self {
+            tx_consumer: consumer,
+            sqlx_client,
+            config,
+        })
+    }
+
+    pub fn spawn_listener(self: &Arc<Self>) -> ListenerHandle {
+        let (tx, rx) = mpsc::channel(128);
+    }
+}
+
+struct ListenerHandle {}
+
+impl ListenerHandle {
+    pub fn stream(&self) -> UnboundedReceiver<RawTransaction> {
+        unimplemented!()
+    }
+}
+
 #[allow(clippy::type_complexity)]
 pub fn start_parsing_and_get_channels(
     transaction_consumer: Arc<TransactionConsumer>,
