@@ -1,10 +1,12 @@
-use std::sync::Arc;
-use crate::{GetPoolPostgresSqlx};
+use crate::models::RawTransactionFromDb;
+use crate::GetPoolPostgresSqlx;
 use anyhow::Result;
 use sqlx::postgres::PgArguments;
-use sqlx::{Postgres, Row, Transaction};
 use sqlx::Arguments;
-use crate::models::RawTransactionFromDb;
+use sqlx::{Postgres, Row, Transaction};
+use std::cmp::Ordering;
+use std::sync::Arc;
+use itertools::Itertools;
 
 const INSERT_RAW_TRANSACTION_QUERY: &str = "INSERT INTO raw_transactions (transaction, transaction_hash, timestamp_block, timestamp_lt, processed) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING";
 
@@ -72,6 +74,11 @@ pub async fn get_raw_transactions(
                     created_at: x.get(4),
                     processed: x.get(5),
                 })
+                .sorted_by(|x, y| match x.timestamp_block.cmp(&y.timestamp_block) {
+                    Ordering::Less => Ordering::Less,
+                    Ordering::Equal => x.timestamp_lt.cmp(&y.timestamp_lt),
+                    Ordering::Greater => Ordering::Greater,
+                })
                 .collect::<Vec<_>>()
         })
         .map_err(anyhow::Error::new)
@@ -90,13 +97,15 @@ pub async fn get_count_raw_transactions(sqlx_client: &Arc<impl GetPoolPostgresSq
 pub async fn create_table_raw_transactions(sqlx_client: &Arc<impl GetPoolPostgresSqlx>) {
     if let Err(e) = sqlx::query(CREATE_TABLE_RAW_TRANSACTIONS_QUERY)
         .execute(sqlx_client.get_pool())
-        .await {
+        .await
+    {
         log::error!("create table raw_transactions ERROR {}", e);
     }
 
     if let Err(e) = sqlx::query(CREATE_INDEX_RAW_TRANSACTIONS_QUERY)
         .execute(sqlx_client.get_pool())
-        .await {
+        .await
+    {
         log::error!("create index raw_transactions ERROR {}", e);
     }
 }
