@@ -1,9 +1,10 @@
 use std::sync::Arc;
-use crate::{GetPoolPostgresSqlx, RawTransactionFromDb};
+use crate::{GetPoolPostgresSqlx};
 use anyhow::Result;
 use sqlx::postgres::PgArguments;
 use sqlx::{Postgres, Row, Transaction};
 use sqlx::Arguments;
+use crate::models::RawTransactionFromDb;
 
 const INSERT_RAW_TRANSACTION_QUERY: &str = "INSERT INTO raw_transactions (transaction, transaction_hash, timestamp_block, timestamp_lt, processed) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING";
 

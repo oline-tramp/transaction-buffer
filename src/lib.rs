@@ -1,10 +1,11 @@
+mod models;
 mod sqlx_client;
 
+use crate::models::RawTransaction;
 use crate::sqlx_client::{
     create_table_raw_transactions, get_count_raw_transactions, get_raw_transactions,
     new_raw_transaction,
 };
-use anyhow::{Context};
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -18,25 +19,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
 use tokio::time::sleep;
-use ton_block::{Deserializable, GetRepresentationHash, Serializable, Transaction};
+use ton_block::{GetRepresentationHash, Transaction};
 use ton_types::UInt256;
 use transaction_consumer::TransactionConsumer;
-
-#[derive(Debug, Clone)]
-pub struct RawTransactionFromDb {
-    pub transaction: Vec<u8>,
-    pub transaction_hash: Vec<u8>,
-    pub timestamp_block: i32,
-    pub timestamp_lt: i64,
-    pub created_at: i64,
-    pub processed: bool,
-}
-
-#[derive(Clone, Debug)]
-pub struct RawTransaction {
-    pub hash: UInt256,
-    pub data: Transaction,
-}
 
 #[async_trait]
 pub trait GetPoolPostgresSqlx {
@@ -157,14 +142,13 @@ async fn parse_raw_transaction(
                 notified = true;
             }
 
-            let raw_transaction =
-                match RawTransaction::try_from(raw_transaction_from_db) {
-                    Ok(ok) => ok,
-                    Err(e) => {
-                        log::error!("{}", e);
-                        continue;
-                    }
-                };
+            let raw_transaction = match RawTransaction::try_from(raw_transaction_from_db) {
+                Ok(ok) => ok,
+                Err(e) => {
+                    log::error!("{}", e);
+                    continue;
+                }
+            };
 
             if let Some(events) =
                 extract_events(&raw_transaction.data, raw_transaction.hash, &events)
@@ -191,34 +175,4 @@ pub fn extract_events(
     .process()
     .ok()
     .flatten()
-}
-
-impl TryFrom<RawTransactionFromDb> for RawTransaction {
-    type Error = anyhow::Error;
-
-    fn try_from(value: RawTransactionFromDb) -> std::result::Result<Self, Self::Error> {
-        let transaction =
-            ton_block::Transaction::construct_from_bytes(value.transaction.as_slice())?;
-
-        Ok(RawTransaction {
-            hash: UInt256::from_be_bytes(&value.transaction_hash),
-            data: transaction,
-        })
-    }
-}
-
-impl From<Transaction> for RawTransactionFromDb {
-    fn from(x: Transaction) -> Self {
-        RawTransactionFromDb {
-            transaction: x
-                .write_to_bytes()
-                .context("Failed serializing tx to bytes")
-                .unwrap(),
-            transaction_hash: x.hash().unwrap().as_slice().to_vec(),
-            timestamp_block: x.now as i32,
-            timestamp_lt: x.lt as i64,
-            created_at: 0,
-            processed: false,
-        }
-    }
 }
