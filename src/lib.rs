@@ -90,7 +90,7 @@ pub async fn parse_kafka_transactions(
         }
         if i % 10_000 == 0 {
             produced_transaction.commit().unwrap();
-            log::error!("COMMIT KAFKA 10_000");
+            log::info!("COMMIT KAFKA 10_000");
             i = 0;
         }
         i += 1;
@@ -106,7 +106,7 @@ pub async fn parse_kafka_transactions(
         }
         if i % 10_000 == 0 {
             produced_transaction.commit().unwrap();
-            log::error!(
+            log::info!(
                 "COMMIT KAFKA 10_000 timestamp_block {}",
                 transaction_timestamp
             );
