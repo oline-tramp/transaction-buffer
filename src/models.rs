@@ -34,7 +34,7 @@ impl BufferedConsumerConfig {
     }
 }
 
-pub struct BuffedParserChannels {
+pub struct BufferedConsumerChannels {
     pub rx_parsed_events:
         UnboundedReceiver<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
     pub tx_commit: UnboundedSender<()>,

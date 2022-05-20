@@ -1,7 +1,7 @@
 pub mod models;
 mod sqlx_client;
 
-use crate::models::{BuffedParserChannels, BufferedConsumerConfig, RawTransaction};
+use crate::models::{BufferedConsumerChannels, BufferedConsumerConfig, RawTransaction};
 use crate::sqlx_client::{
     create_table_raw_transactions, get_count_raw_transactions, get_raw_transactions,
     new_raw_transaction,
@@ -25,7 +25,7 @@ use ton_types::UInt256;
 #[allow(clippy::type_complexity)]
 pub fn start_parsing_and_get_channels(
     config: BufferedConsumerConfig
-) -> BuffedParserChannels {
+) -> BufferedConsumerChannels {
     let (tx_parsed_events, rx_parsed_events) = mpsc::unbounded();
     let (tx_commit, rx_commit) = mpsc::unbounded();
     let notify_for_services = Arc::new(Notify::new());
@@ -39,7 +39,7 @@ pub fn start_parsing_and_get_channels(
             rx_commit,
         ));
     }
-    BuffedParserChannels {
+    BufferedConsumerChannels {
         rx_parsed_events,
         tx_commit,
         notify_for_services,
