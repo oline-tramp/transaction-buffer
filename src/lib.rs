@@ -8,6 +8,7 @@ use crate::sqlx_client::{
 };
 use async_trait::async_trait;
 use chrono::Utc;
+use futures::channel::mpsc;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::SinkExt;
 use futures::StreamExt;
@@ -28,8 +29,40 @@ pub trait GetPoolPostgresSqlx {
     fn get_pool(&self) -> &PgPool;
 }
 
+#[allow(clippy::type_complexity)]
+pub fn start_parsing_and_get_channels(
+    transaction_consumer: Arc<TransactionConsumer>,
+    sqlx_client: Arc<impl GetPoolPostgresSqlx + std::marker::Send + std::marker::Sync + 'static>,
+    timestamp_sync: i32,
+    events_to_parse: Vec<AnyExtractable>,
+    secs_delay_from_db: i32,
+) -> (
+    UnboundedReceiver<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
+    UnboundedSender<()>,
+    Arc<Notify>,
+) {
+    let (tx_parsed_events, rx_parsed_events) = mpsc::unbounded();
+    let (tx_commit, rx_commit) = mpsc::unbounded();
+    let notify_for_services = Arc::new(Notify::new());
+
+    {
+        let notify_for_services = notify_for_services.clone();
+        tokio::spawn(parse_kafka_transactions(
+            transaction_consumer,
+            sqlx_client,
+            timestamp_sync,
+            tx_parsed_events,
+            events_to_parse,
+            notify_for_services,
+            secs_delay_from_db,
+            rx_commit,
+        ));
+    }
+    (rx_parsed_events, tx_commit, notify_for_services)
+}
+
 #[allow(clippy::too_many_arguments)]
-pub async fn parse_kafka_transactions(
+async fn parse_kafka_transactions(
     transaction_consumer: Arc<TransactionConsumer>,
     sqlx_client: Arc<impl GetPoolPostgresSqlx + std::marker::Send + std::marker::Sync + 'static>,
     timestamp_sync: i32,
