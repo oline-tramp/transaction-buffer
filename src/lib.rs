@@ -1,4 +1,4 @@
-mod models;
+pub mod models;
 mod sqlx_client;
 
 use crate::models::RawTransaction;
