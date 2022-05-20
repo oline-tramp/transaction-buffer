@@ -154,7 +154,6 @@ async fn parse_raw_transaction(
             .await
             .expect("cant get pg transaction");
 
-        log::error!("get_raw_transactions");
         let raw_transactions_from_db =
             get_raw_transactions(5000, timestamp_now - secs_delay, &mut begin)
                 .await
@@ -192,7 +191,6 @@ async fn parse_raw_transaction(
         }
         tx.send(send_message).await.expect("dead sender");
         commit_rx.next().await;
-        log::error!("COMMIT");
         begin.commit().await.expect("cant commit db update");
     }
 }
