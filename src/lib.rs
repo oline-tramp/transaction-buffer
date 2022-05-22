@@ -62,7 +62,7 @@ async fn parse_kafka_transactions(
         .await
         .expect("cant get stream transactions");
 
-    let mut i: u64 = 0;
+    let mut i: i64 = 0;
 
     while let Some(produced_transaction) = stream_transactions.next().await {
         let transaction: Transaction = produced_transaction.transaction.clone();
@@ -125,6 +125,8 @@ async fn parse_raw_transaction(
     mut commit_rx: UnboundedReceiver<()>,
 ) {
     let mut notified = false;
+    let count_all_raw = get_count_raw_transactions(&pg_pool).await;
+    let mut i: i64 = 0;
 
     loop {
         let timestamp_now = Utc::now().timestamp() as i32;
@@ -150,6 +152,11 @@ async fn parse_raw_transaction(
 
         let mut send_message = vec![];
         for raw_transaction_from_db in raw_transactions_from_db {
+            i += 1;
+            if !notified && i % 5000 == 0 {
+                log::info!("parsing {}/{}", i, count_all_raw);
+            }
+
             if !notified && raw_transaction_from_db.timestamp_block > timestamp_sync {
                 notify.notify_one();
                 notified = true;
