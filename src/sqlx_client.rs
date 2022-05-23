@@ -10,6 +10,8 @@ const INSERT_RAW_TRANSACTION_QUERY: &str = "INSERT INTO raw_transactions (transa
 
 const COUNT_RAW_TRANSACTION_QUERY: &str = "SELECT count(*) FROM raw_transactions";
 
+const COUNT_RAW_NOT_PROCESSED_TRANSACTION_QUERY: &str = "SELECT count(*) FROM raw_transactions WHERE processed = false";
+
 const GET_AND_UPDATE_RAW_TRANSACTIONS_QUERY: &str = "UPDATE raw_transactions
 SET processed = true
 WHERE (timestamp_block, timestamp_lt) IN (SELECT timestamp_block, timestamp_lt
@@ -84,6 +86,16 @@ pub async fn get_raw_transactions(
 
 pub async fn get_count_raw_transactions(pg_pool: &PgPool) -> i64 {
     let count: i64 = sqlx::query(COUNT_RAW_TRANSACTION_QUERY)
+        .fetch_one(pg_pool)
+        .await
+        .map(|x| x.get(0))
+        .unwrap_or_default();
+
+    count
+}
+
+pub async fn get_count_not_processed_raw_transactions(pg_pool: &PgPool) -> i64 {
+    let count: i64 = sqlx::query(COUNT_RAW_NOT_PROCESSED_TRANSACTION_QUERY)
         .fetch_one(pg_pool)
         .await
         .map(|x| x.get(0))

@@ -3,14 +3,16 @@ mod sqlx_client;
 
 use crate::models::{BufferedConsumerChannels, BufferedConsumerConfig, RawTransaction};
 use crate::sqlx_client::{
-    create_table_raw_transactions, get_count_raw_transactions, get_raw_transactions,
-    new_raw_transaction,
+    create_table_raw_transactions, get_count_not_processed_raw_transactions,
+    get_count_raw_transactions, get_raw_transactions, new_raw_transaction,
 };
 use chrono::Utc;
 use futures::channel::mpsc::{Receiver, Sender};
 use futures::SinkExt;
 use futures::StreamExt;
-use indexer_lib::{AnyExtractable, AnyExtractableOutput, ExtractInput, ParsedOutput, TransactionExt};
+use indexer_lib::{
+    AnyExtractable, AnyExtractableOutput, ExtractInput, ParsedOutput, TransactionExt,
+};
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,9 +22,7 @@ use ton_block::{GetRepresentationHash, Transaction};
 use ton_types::UInt256;
 
 #[allow(clippy::type_complexity)]
-pub fn start_parsing_and_get_channels(
-    config: BufferedConsumerConfig
-) -> BufferedConsumerChannels {
+pub fn start_parsing_and_get_channels(config: BufferedConsumerConfig) -> BufferedConsumerChannels {
     let (tx_parsed_events, rx_parsed_events) = futures::channel::mpsc::channel(1);
     let (tx_commit, rx_commit) = futures::channel::mpsc::channel(1);
     let notify_for_services = Arc::new(Notify::new());
@@ -54,7 +54,8 @@ async fn parse_kafka_transactions(
 
     let reset = get_count_raw_transactions(&config.pg_pool).await == 0;
 
-    let mut stream_transactions = config.transaction_consumer
+    let mut stream_transactions = config
+        .transaction_consumer
         .stream_until_highest_offsets(reset)
         .await
         .expect("cant get highest offsets stream transactions");
@@ -65,7 +66,13 @@ async fn parse_kafka_transactions(
         i += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_time = transaction.time() as i32;
-        if extract_events(&transaction, transaction.hash().unwrap(), &config.events_to_parse).is_some() {
+        if extract_events(
+            &transaction,
+            transaction.hash().unwrap(),
+            &config.events_to_parse,
+        )
+        .is_some()
+        {
             new_raw_transaction(transaction.into(), &config.pg_pool)
                 .await
                 .expect("cant insert raw_transaction to db");
@@ -90,7 +97,8 @@ async fn parse_kafka_transactions(
         ));
     }
 
-    let mut stream_transactions = config.transaction_consumer
+    let mut stream_transactions = config
+        .transaction_consumer
         .stream_transactions(false)
         .await
         .expect("cant get stream transactions");
@@ -99,7 +107,13 @@ async fn parse_kafka_transactions(
         i += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_timestamp = transaction.now;
-        if extract_events(&transaction, transaction.hash().unwrap(), &config.events_to_parse).is_some() {
+        if extract_events(
+            &transaction,
+            transaction.hash().unwrap(),
+            &config.events_to_parse,
+        )
+        .is_some()
+        {
             new_raw_transaction(transaction.into(), &config.pg_pool)
                 .await
                 .expect("cant insert raw_transaction to db");
@@ -124,19 +138,16 @@ async fn parse_raw_transaction(
     mut commit_rx: Receiver<()>,
 ) {
     let mut notified = false;
-    let count_all_raw = get_count_raw_transactions(&pg_pool).await;
+    let count_not_processed = get_count_not_processed_raw_transactions(&pg_pool).await;
     let mut i: i64 = 0;
 
     loop {
         let timestamp_now = Utc::now().timestamp() as i32;
 
-        let mut begin = pg_pool
-            .begin()
-            .await
-            .expect("cant get pg transaction");
+        let mut begin = pg_pool.begin().await.expect("cant get pg transaction");
 
         let raw_transactions_from_db =
-            get_raw_transactions(5000, timestamp_now - secs_delay, &mut begin)
+            get_raw_transactions(1000, timestamp_now - secs_delay, &mut begin)
                 .await
                 .unwrap_or_default();
 
@@ -152,13 +163,9 @@ async fn parse_raw_transaction(
         let mut send_message = vec![];
         for raw_transaction_from_db in raw_transactions_from_db {
             i += 1;
-            if !notified && i % 5000 == 0 {
-                log::info!("parsing {}/{}", i, count_all_raw);
-            }
 
-            if !notified && i >= count_all_raw {
-                notify.notify_one();
-                notified = true;
+            if !notified && i % 1000 == 0 && i <= count_not_processed {
+                log::info!("parsing {}/{}", i, count_not_processed);
             }
 
             let raw_transaction = match RawTransaction::try_from(raw_transaction_from_db) {
@@ -178,6 +185,11 @@ async fn parse_raw_transaction(
         tx.send(send_message).await.expect("dead sender");
         commit_rx.next().await;
         begin.commit().await.expect("cant commit db update");
+
+        if !notified && i >= count_not_processed {
+            notify.notify_one();
+            notified = true;
+        }
     }
 }
 
