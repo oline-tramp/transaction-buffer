@@ -7,13 +7,10 @@ use crate::sqlx_client::{
     new_raw_transaction,
 };
 use chrono::Utc;
-use futures::channel::mpsc;
-use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
+use futures::channel::mpsc::{Receiver, Sender};
 use futures::SinkExt;
 use futures::StreamExt;
-use indexer_lib::{
-    AnyExtractable, AnyExtractableOutput, ExtractInput, ParsedOutput, TransactionExt,
-};
+use indexer_lib::{AnyExtractable, AnyExtractableOutput, ExtractInput, ParsedOutput, TransactionExt};
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,8 +23,8 @@ use ton_types::UInt256;
 pub fn start_parsing_and_get_channels(
     config: BufferedConsumerConfig
 ) -> BufferedConsumerChannels {
-    let (tx_parsed_events, rx_parsed_events) = mpsc::unbounded();
-    let (tx_commit, rx_commit) = mpsc::unbounded();
+    let (tx_parsed_events, rx_parsed_events) = futures::channel::mpsc::channel(1);
+    let (tx_commit, rx_commit) = futures::channel::mpsc::channel(1);
     let notify_for_services = Arc::new(Notify::new());
 
     {
@@ -49,22 +46,23 @@ pub fn start_parsing_and_get_channels(
 #[allow(clippy::too_many_arguments)]
 async fn parse_kafka_transactions(
     config: BufferedConsumerConfig,
-    tx_parsed_events: UnboundedSender<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
+    tx_parsed_events: Sender<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
     notify_for_services: Arc<Notify>,
-    commit_rx: UnboundedReceiver<()>,
+    commit_rx: Receiver<()>,
 ) {
     create_table_raw_transactions(&config.pg_pool).await;
 
     let reset = get_count_raw_transactions(&config.pg_pool).await == 0;
 
     let mut stream_transactions = config.transaction_consumer
-        .stream_transactions(reset)
+        .stream_until_highest_offsets(reset)
         .await
-        .expect("cant get stream transactions");
+        .expect("cant get highest offsets stream transactions");
 
     let mut i: i64 = 0;
 
     while let Some(produced_transaction) = stream_transactions.next().await {
+        i += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_time = transaction.time() as i32;
         if extract_events(&transaction, transaction.hash().unwrap(), &config.events_to_parse).is_some() {
@@ -72,30 +70,33 @@ async fn parse_kafka_transactions(
                 .await
                 .expect("cant insert raw_transaction to db");
         }
-        if transaction_time - config.timestamp_sync > 0 {
+        if i % 100_000 == 0 {
             produced_transaction.commit().unwrap();
-            let pg_pool = config.pg_pool.clone();
-            let events = config.events_to_parse.clone();
-            tokio::spawn(parse_raw_transaction(
-                events,
-                tx_parsed_events,
-                notify_for_services,
-                config.timestamp_sync,
-                pg_pool,
-                config.delay,
-                commit_rx,
-            ));
-            break;
-        }
-        if i % 10_000 == 0 {
-            produced_transaction.commit().unwrap();
-            log::info!("COMMIT KAFKA 10_000");
+            log::info!("COMMIT KAFKA 100_000 timestamp_block {}", transaction_time);
             i = 0;
         }
-        i += 1;
     }
 
+    {
+        let pg_pool = config.pg_pool.clone();
+        let events = config.events_to_parse.clone();
+        tokio::spawn(parse_raw_transaction(
+            events,
+            tx_parsed_events,
+            notify_for_services,
+            pg_pool,
+            config.delay,
+            commit_rx,
+        ));
+    }
+
+    let mut stream_transactions = config.transaction_consumer
+        .stream_transactions(false)
+        .await
+        .expect("cant get stream transactions");
+
     while let Some(produced_transaction) = stream_transactions.next().await {
+        i += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_timestamp = transaction.now;
         if extract_events(&transaction, transaction.hash().unwrap(), &config.events_to_parse).is_some() {
@@ -103,26 +104,24 @@ async fn parse_kafka_transactions(
                 .await
                 .expect("cant insert raw_transaction to db");
         }
-        if i % 10_000 == 0 {
+        if i % 1_000 == 0 {
             produced_transaction.commit().unwrap();
             log::info!(
-                "COMMIT KAFKA 10_000 timestamp_block {}",
+                "COMMIT KAFKA 1000 timestamp_block {}",
                 transaction_timestamp
             );
             i = 0;
         }
-        i += 1;
     }
 }
 
 async fn parse_raw_transaction(
     events: Vec<AnyExtractable>,
-    mut tx: UnboundedSender<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
+    mut tx: Sender<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
     notify: Arc<Notify>,
-    timestamp_sync: i32,
     pg_pool: PgPool,
     secs_delay: i32,
-    mut commit_rx: UnboundedReceiver<()>,
+    mut commit_rx: Receiver<()>,
 ) {
     let mut notified = false;
     let count_all_raw = get_count_raw_transactions(&pg_pool).await;
@@ -157,7 +156,7 @@ async fn parse_raw_transaction(
                 log::info!("parsing {}/{}", i, count_all_raw);
             }
 
-            if !notified && raw_transaction_from_db.timestamp_block > timestamp_sync {
+            if !notified && i >= count_all_raw {
                 notify.notify_one();
                 notified = true;
             }

@@ -1,5 +1,5 @@
 use anyhow::Context;
-use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
+use futures::channel::mpsc::{Receiver, Sender};
 use indexer_lib::{AnyExtractable, AnyExtractableOutput, ParsedOutput};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -9,7 +9,6 @@ use ton_types::UInt256;
 use transaction_consumer::TransactionConsumer;
 
 pub struct BufferedConsumerConfig {
-    pub timestamp_sync: i32,
     pub delay: i32,
     pub transaction_consumer: Arc<TransactionConsumer>,
     pub pg_pool: PgPool,
@@ -18,14 +17,12 @@ pub struct BufferedConsumerConfig {
 
 impl BufferedConsumerConfig {
     pub fn new(
-        timestamp_sync: i32,
         delay: i32,
         transaction_consumer: Arc<TransactionConsumer>,
         pg_pool: PgPool,
         events_to_parse: Vec<AnyExtractable>,
     ) -> Self {
         Self {
-            timestamp_sync,
             delay,
             transaction_consumer,
             pg_pool,
@@ -36,8 +33,8 @@ impl BufferedConsumerConfig {
 
 pub struct BufferedConsumerChannels {
     pub rx_parsed_events:
-        UnboundedReceiver<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
-    pub tx_commit: UnboundedSender<()>,
+        Receiver<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
+    pub tx_commit: Sender<()>,
     pub notify_for_services: Arc<Notify>,
 }
 
