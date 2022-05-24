@@ -6,7 +6,7 @@ use sqlx::{Arguments, PgPool};
 use sqlx::{Postgres, Row, Transaction};
 use std::cmp::Ordering;
 
-const INSERT_RAW_TRANSACTION_QUERY: &str = "INSERT INTO raw_transactions (transaction, transaction_hash, timestamp_block, timestamp_lt, processed) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO REPALACE";
+const INSERT_RAW_TRANSACTION_QUERY: &str = "INSERT INTO raw_transactions (transaction, transaction_hash, timestamp_block, timestamp_lt, processed) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING";
 const INSERT_RAW_TRANSACTIONS_QUERY: &str = "INSERT INTO raw_transactions (transaction, transaction_hash, timestamp_block, timestamp_lt, processed) \
 SELECT * FROM UNNEST ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING";
 
