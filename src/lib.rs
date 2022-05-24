@@ -2,10 +2,7 @@ pub mod models;
 mod sqlx_client;
 
 use crate::models::{BufferedConsumerChannels, BufferedConsumerConfig, RawTransaction};
-use crate::sqlx_client::{
-    create_table_raw_transactions, get_count_not_processed_raw_transactions,
-    get_count_raw_transactions, get_raw_transactions, new_raw_transaction,
-};
+use crate::sqlx_client::{create_table_raw_transactions, get_count_not_processed_raw_transactions, get_count_raw_transactions, get_raw_transactions, insert_raw_transaction, insert_raw_transactions};
 use chrono::Utc;
 use futures::channel::mpsc::{Receiver, Sender};
 use futures::SinkExt;
@@ -61,11 +58,12 @@ async fn parse_kafka_transactions(
         .expect("cant get highest offsets stream transactions");
 
     let mut i: i64 = 0;
-
+    let mut raw_transactions = vec![];
     while let Some(produced_transaction) = stream_transactions.next().await {
         i += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_time = transaction.time() as i32;
+
         if extract_events(
             &transaction,
             transaction.hash().unwrap(),
@@ -73,15 +71,22 @@ async fn parse_kafka_transactions(
         )
         .is_some()
         {
-            new_raw_transaction(transaction.into(), &config.pg_pool)
-                .await
-                .expect("cant insert raw_transaction to db");
+            raw_transactions.push(transaction.into());
         }
-        if i % 100_000 == 0 {
+
+        if raw_transactions.len() >= 10_000 {
+            insert_raw_transactions(&mut raw_transactions, &config.pg_pool).await.expect("cant insert raw_transactions: rip db");
+        }
+
+        if i >= 100_000 {
             produced_transaction.commit().unwrap();
             log::info!("COMMIT KAFKA 100_000 timestamp_block {}", transaction_time);
             i = 0;
         }
+    }
+
+    if !raw_transactions.is_empty() {
+        insert_raw_transactions(&mut raw_transactions, &config.pg_pool).await.expect("cant insert raw_transaction: rip db");
     }
 
     {
@@ -114,14 +119,14 @@ async fn parse_kafka_transactions(
         )
         .is_some()
         {
-            new_raw_transaction(transaction.into(), &config.pg_pool)
+            insert_raw_transaction(transaction.into(), &config.pg_pool)
                 .await
                 .expect("cant insert raw_transaction to db");
         }
-        if i % 1_000 == 0 {
+        if i % 5_000 == 0 {
             produced_transaction.commit().unwrap();
             log::info!(
-                "COMMIT KAFKA 1000 timestamp_block {}",
+                "COMMIT KAFKA 5000 timestamp_block {}",
                 transaction_timestamp
             );
             i = 0;
@@ -164,10 +169,6 @@ async fn parse_raw_transaction(
         for raw_transaction_from_db in raw_transactions_from_db {
             i += 1;
 
-            if !notified && i % 1000 == 0 && i <= count_not_processed {
-                log::info!("parsing {}/{}", i, count_not_processed);
-            }
-
             let raw_transaction = match RawTransaction::try_from(raw_transaction_from_db) {
                 Ok(ok) => ok,
                 Err(e) => {
@@ -185,6 +186,10 @@ async fn parse_raw_transaction(
         tx.send(send_message).await.expect("dead sender");
         commit_rx.next().await;
         begin.commit().await.expect("cant commit db update");
+
+        if !notified && i <= count_not_processed {
+            log::info!("parsing {}/{}", i, count_not_processed);
+        }
 
         if !notified && i >= count_not_processed {
             notify.notify_one();

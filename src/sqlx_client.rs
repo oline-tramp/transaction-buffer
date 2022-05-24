@@ -1,16 +1,19 @@
 use crate::models::RawTransactionFromDb;
 use anyhow::Result;
+use itertools::Itertools;
 use sqlx::postgres::PgArguments;
 use sqlx::{Arguments, PgPool};
 use sqlx::{Postgres, Row, Transaction};
 use std::cmp::Ordering;
-use itertools::Itertools;
 
-const INSERT_RAW_TRANSACTION_QUERY: &str = "INSERT INTO raw_transactions (transaction, transaction_hash, timestamp_block, timestamp_lt, processed) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING";
+const INSERT_RAW_TRANSACTION_QUERY: &str = "INSERT INTO raw_transactions (transaction, transaction_hash, timestamp_block, timestamp_lt, processed) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO REPALACE";
+const INSERT_RAW_TRANSACTIONS_QUERY: &str = "INSERT INTO raw_transactions (transaction, transaction_hash, timestamp_block, timestamp_lt, processed) \
+SELECT * FROM UNNEST ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING";
 
 const COUNT_RAW_TRANSACTION_QUERY: &str = "SELECT count(*) FROM raw_transactions";
 
-const COUNT_RAW_NOT_PROCESSED_TRANSACTION_QUERY: &str = "SELECT count(*) FROM raw_transactions WHERE processed = false";
+const COUNT_RAW_NOT_PROCESSED_TRANSACTION_QUERY: &str =
+    "SELECT count(*) FROM raw_transactions WHERE processed = false";
 
 const GET_AND_UPDATE_RAW_TRANSACTIONS_QUERY: &str = "UPDATE raw_transactions
 SET processed = true
@@ -34,7 +37,7 @@ const CREATE_TABLE_RAW_TRANSACTIONS_QUERY: &str = "CREATE TABLE IF NOT EXISTS ra
 
 const CREATE_INDEX_RAW_TRANSACTIONS_QUERY: &str = "CREATE INDEX IF NOT EXISTS raw_transactions_ix_ttp ON raw_transactions (timestamp_block, timestamp_lt, processed);";
 
-pub async fn new_raw_transaction(
+pub async fn insert_raw_transaction(
     raw_transaction: RawTransactionFromDb,
     pg_pool: &PgPool,
 ) -> Result<()> {
@@ -118,4 +121,34 @@ pub async fn create_table_raw_transactions(pg_pool: &PgPool) {
     {
         log::error!("create index raw_transactions ERROR {}", e);
     }
+}
+
+pub async fn insert_raw_transactions(
+    raw_transactions: &mut Vec<RawTransactionFromDb>,
+    pg_pool: &PgPool,
+) -> Result<()> {
+    let mut transaction: Vec<Vec<u8>> = Vec::new();
+    let mut transaction_hash: Vec<Vec<u8>> = Vec::new();
+    let mut timestamp_block: Vec<i32> = Vec::new();
+    let mut timestamp_lt: Vec<i64> = Vec::new();
+    let mut processed: Vec<bool> = Vec::new();
+
+    raw_transactions.drain(..).for_each(|row| {
+        transaction.push(row.transaction);
+        transaction_hash.push(row.transaction_hash);
+        timestamp_block.push(row.timestamp_block);
+        timestamp_lt.push(row.timestamp_lt);
+        processed.push(row.processed);
+    });
+
+    sqlx::query(INSERT_RAW_TRANSACTIONS_QUERY)
+        .bind(transaction)
+        .bind(transaction_hash)
+        .bind(timestamp_block)
+        .bind(timestamp_lt)
+        .bind(processed)
+        .execute(pg_pool)
+        .await?;
+
+    Ok(())
 }
