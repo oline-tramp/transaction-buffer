@@ -3,7 +3,7 @@ mod sqlx_client;
 
 use crate::models::{BufferedConsumerChannels, BufferedConsumerConfig, RawTransaction};
 use crate::sqlx_client::{create_table_raw_transactions, get_count_not_processed_raw_transactions, get_count_raw_transactions, get_raw_transactions, insert_raw_transaction, insert_raw_transactions};
-use chrono::Utc;
+use chrono::{NaiveDateTime, Utc};
 use futures::channel::mpsc::{Receiver, Sender};
 use futures::SinkExt;
 use futures::StreamExt;
@@ -77,10 +77,9 @@ async fn parse_kafka_transactions(
         if raw_transactions.len() >= 10_000 {
             insert_raw_transactions(&mut raw_transactions, &config.pg_pool).await.expect("cant insert raw_transactions: rip db");
         }
-
         if i >= 100_000 {
             produced_transaction.commit().unwrap();
-            log::info!("COMMIT KAFKA 100_000 timestamp_block {}", transaction_time);
+            log::info!("COMMIT KAFKA 100_000 timestamp_block {} date: {}", transaction_time, NaiveDateTime::from_timestamp(transaction_time as i64, 0));
             i = 0;
         }
     }
@@ -126,8 +125,9 @@ async fn parse_kafka_transactions(
         if i % 5_000 == 0 {
             produced_transaction.commit().unwrap();
             log::info!(
-                "COMMIT KAFKA 5000 timestamp_block {}",
-                transaction_timestamp
+                "COMMIT KAFKA 5000 timestamp_block {} date: {}",
+                transaction_timestamp,
+                NaiveDateTime::from_timestamp(transaction_timestamp as i64, 0)
             );
             i = 0;
         }
