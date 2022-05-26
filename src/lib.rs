@@ -57,12 +57,10 @@ async fn parse_kafka_transactions(
         .await
         .expect("cant get highest offsets stream transactions");
 
-    let mut i: i64 = 0;
     let mut raw_transactions = vec![];
     while let Some(produced_transaction) = stream_transactions.next().await {
-        i += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
-        let transaction_time = transaction.time() as i32;
+        let transaction_time = transaction.time() as i64;
 
         if extract_events(
             &transaction,
@@ -76,10 +74,8 @@ async fn parse_kafka_transactions(
 
         if raw_transactions.len() >= 10_000 {
             insert_raw_transactions(&mut raw_transactions, &config.pg_pool).await.expect("cant insert raw_transactions: rip db");
-        }
-        if i >= 100_000 {
             produced_transaction.commit().unwrap();
-            log::info!("COMMIT KAFKA 100_000 timestamp_block {} date: {}", transaction_time, NaiveDateTime::from_timestamp(transaction_time as i64, 0));
+            log::info!("COMMIT KAFKA 10_000 parsed transactions timestamp_block {} date: {}", transaction_time, NaiveDateTime::from_timestamp(transaction_time, 0));
             i = 0;
         }
     }
@@ -101,6 +97,7 @@ async fn parse_kafka_transactions(
         ));
     }
 
+    let mut i = 0;
     let mut stream_transactions = config
         .transaction_consumer
         .stream_transactions(false)
@@ -122,10 +119,12 @@ async fn parse_kafka_transactions(
                 .await
                 .expect("cant insert raw_transaction to db");
         }
-        if i % 5_000 == 0 {
-            produced_transaction.commit().unwrap();
+
+        produced_transaction.commit().unwrap();
+
+        if i >= 5_000 {
             log::info!(
-                "COMMIT KAFKA 5000 timestamp_block {} date: {}",
+                "KAFKA 5_000 transactions timestamp_block {} date: {}",
                 transaction_timestamp,
                 NaiveDateTime::from_timestamp(transaction_timestamp as i64, 0)
             );
