@@ -76,7 +76,6 @@ async fn parse_kafka_transactions(
             insert_raw_transactions(&mut raw_transactions, &config.pg_pool).await.expect("cant insert raw_transactions: rip db");
             produced_transaction.commit().unwrap();
             log::info!("COMMIT KAFKA 10_000 parsed transactions timestamp_block {} date: {}", transaction_time, NaiveDateTime::from_timestamp(transaction_time, 0));
-            i = 0;
         }
     }
 
