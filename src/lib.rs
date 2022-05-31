@@ -40,6 +40,18 @@ pub fn start_parsing_and_get_channels(config: BufferedConsumerConfig) -> Buffere
     }
 }
 
+pub fn test_from_raw_transactions(pg_pool: PgPool, events_to_parse: Vec<AnyExtractable>) -> BufferedConsumerChannels {
+    let (tx_parsed_events, rx_parsed_events) = futures::channel::mpsc::channel(1);
+    let (tx_commit, rx_commit) = futures::channel::mpsc::channel(1);
+    let notify_for_services = Arc::new(Notify::new());
+    tokio::spawn(parse_raw_transaction(events_to_parse, tx_parsed_events, notify_for_services.clone(), pg_pool, 0, rx_commit));
+    BufferedConsumerChannels {
+        rx_parsed_events,
+        tx_commit,
+        notify_for_services,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn parse_kafka_transactions(
     config: BufferedConsumerConfig,
