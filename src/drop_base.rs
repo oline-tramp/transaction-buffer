@@ -1,0 +1,30 @@
+use sqlx::PgPool;
+use crate::sqlx_client::{create_drop_index_table, drop_functions, drop_tables, get_drop_index, insert_drop_index};
+
+pub async fn check_base(pg_pool: &PgPool, drop_index: i32) {
+    if let Ok(x) = get_drop_index(pg_pool).await {
+        if x != drop_index {
+            drop_tables(pg_pool).await;
+            drop_functions(pg_pool).await;
+            create_drop_index_table(pg_pool).await;
+            insert_drop_index(pg_pool, drop_index).await;
+        }
+    } else {
+        create_drop_index_table(pg_pool).await;
+        insert_drop_index(pg_pool, drop_index).await;
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use sqlx::PgPool;
+    use crate::drop_base::check_base;
+
+    #[tokio::test]
+    async fn test_drop_base() {
+        let pg_pool = PgPool::connect("postgresql://postgres:postgres@localhost:5432/test_base")
+            .await
+            .unwrap();
+        check_base(&pg_pool, 3).await;
+    }
+}

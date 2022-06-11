@@ -1,5 +1,6 @@
 pub mod models;
 mod sqlx_client;
+pub mod drop_base;
 
 use crate::models::{BufferedConsumerChannels, BufferedConsumerConfig, RawTransaction};
 use crate::sqlx_client::{create_table_raw_transactions, get_count_not_processed_raw_transactions, get_count_raw_transactions, get_raw_transactions, insert_raw_transaction, insert_raw_transactions};

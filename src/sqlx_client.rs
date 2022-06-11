@@ -35,6 +35,46 @@ const CREATE_TABLE_RAW_TRANSACTIONS_QUERY: &str = "CREATE TABLE IF NOT EXISTS ra
     PRIMARY KEY (transaction_hash)
 );";
 
+const CREATE_TABLE_DROP_BASE_INDEX_QUERY: &str = "CREATE TABLE IF NOT EXISTS drop_base_index
+(
+    name  VARCHAR NOT NULL UNIQUE,
+    value INTEGER NOT NULL
+);";
+
+const INSERT_DROP_BASE_INDEX_QUERY: &str = "INSERT INTO drop_base_index (name, value) values ('index', $1);";
+
+const SELECT_DROP_BASE_INDEX_QUERY: &str = "SELECT value FROM drop_base_index;";
+
+const DROP_TABLES_QUERY: &str = "DO
+$$
+    DECLARE
+        r RECORD;
+    BEGIN
+        FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = current_schema())
+            LOOP
+                EXECUTE 'DROP TABLE ' || quote_ident(r.tablename) || ' CASCADE';
+            END LOOP;
+    END
+$$;";
+
+const DROP_FUNCTIONS_QUERY: &str = "DO
+$$
+    DECLARE
+        r RECORD;
+    BEGIN
+        FOR r IN (SELECT p.proname as fun
+                  FROM pg_catalog.pg_namespace n
+                           JOIN
+                       pg_catalog.pg_proc p ON
+                           p.pronamespace = n.oid
+                  WHERE p.prokind = 'f'
+                    AND n.nspname = 'public')
+            LOOP
+                EXECUTE 'DROP FUNCTION ' || quote_ident(r.fun) || ' CASCADE';
+            END LOOP;
+    END
+$$;";
+
 const CREATE_INDEX_RAW_TRANSACTIONS_QUERY: &str = "CREATE INDEX IF NOT EXISTS raw_transactions_ix_ttp ON raw_transactions (timestamp_block, timestamp_lt, processed);";
 
 pub async fn insert_raw_transaction(
@@ -151,4 +191,42 @@ pub async fn insert_raw_transactions(
         .await?;
 
     Ok(())
+}
+
+pub async fn create_drop_index_table(pg_pool: &PgPool) {
+    if let Err(e) = sqlx::query(CREATE_TABLE_DROP_BASE_INDEX_QUERY)
+        .execute(pg_pool)
+        .await {
+        log::error!("create table drop_index ERROR {}", e);
+    }
+}
+
+pub async fn get_drop_index(pg_pool: &PgPool) -> Result<i32, anyhow::Error> {
+    let index: i32 = sqlx::query(SELECT_DROP_BASE_INDEX_QUERY)
+        .fetch_one(pg_pool)
+        .await
+        .map(|x| x.get(0))?;
+    Ok(index)
+}
+
+pub async fn insert_drop_index(pg_pool: &PgPool, index: i32) {
+    if let Err(e) = sqlx::query(INSERT_DROP_BASE_INDEX_QUERY)
+        .bind(index)
+        .execute(pg_pool).await {
+        log::error!("insert index drop ERROR {}", e);
+    }
+}
+
+pub async fn drop_tables(pg_pool: &PgPool) {
+    if let Err(e) = sqlx::query(DROP_TABLES_QUERY)
+        .execute(pg_pool).await {
+        log::error!("drop tables ERROR {}", e);
+    }
+}
+
+pub async fn drop_functions(pg_pool: &PgPool) {
+    if let Err(e) = sqlx::query(DROP_FUNCTIONS_QUERY)
+        .execute(pg_pool).await {
+        log::error!("drop functions ERROR {}", e);
+    }
 }
