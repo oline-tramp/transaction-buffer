@@ -1,9 +1,14 @@
+pub mod drop_base;
 pub mod models;
 mod sqlx_client;
-pub mod drop_base;
 
+use std::intrinsics::offset;
 use crate::models::{BufferedConsumerChannels, BufferedConsumerConfig, RawTransaction};
-use crate::sqlx_client::{create_table_raw_transactions, get_count_not_processed_raw_transactions, get_count_raw_transactions, get_raw_transactions, insert_raw_transaction, insert_raw_transactions};
+use crate::sqlx_client::{
+    create_table_raw_transactions, get_count_not_processed_raw_transactions,
+    get_count_raw_transactions, get_raw_transactions, insert_raw_transaction,
+    insert_raw_transactions,
+};
 use chrono::{NaiveDateTime, Utc};
 use futures::channel::mpsc::{Receiver, Sender};
 use futures::SinkExt;
@@ -18,6 +23,7 @@ use tokio::sync::Notify;
 use tokio::time::sleep;
 use ton_block::{GetRepresentationHash, Transaction};
 use ton_types::UInt256;
+use transaction_consumer::StreamFrom;
 
 #[allow(clippy::type_complexity)]
 pub fn start_parsing_and_get_channels(config: BufferedConsumerConfig) -> BufferedConsumerChannels {
@@ -41,11 +47,21 @@ pub fn start_parsing_and_get_channels(config: BufferedConsumerConfig) -> Buffere
     }
 }
 
-pub fn test_from_raw_transactions(pg_pool: PgPool, events_to_parse: Vec<AnyExtractable>) -> BufferedConsumerChannels {
+pub fn test_from_raw_transactions(
+    pg_pool: PgPool,
+    events_to_parse: Vec<AnyExtractable>,
+) -> BufferedConsumerChannels {
     let (tx_parsed_events, rx_parsed_events) = futures::channel::mpsc::channel(1);
     let (tx_commit, rx_commit) = futures::channel::mpsc::channel(1);
     let notify_for_services = Arc::new(Notify::new());
-    tokio::spawn(parse_raw_transaction(events_to_parse, tx_parsed_events, notify_for_services.clone(), pg_pool, 0, rx_commit));
+    tokio::spawn(parse_raw_transaction(
+        events_to_parse,
+        tx_parsed_events,
+        notify_for_services.clone(),
+        pg_pool,
+        0,
+        rx_commit,
+    ));
     BufferedConsumerChannels {
         rx_parsed_events,
         tx_commit,
@@ -62,11 +78,14 @@ async fn parse_kafka_transactions(
 ) {
     create_table_raw_transactions(&config.pg_pool).await;
 
-    let reset = get_count_raw_transactions(&config.pg_pool).await == 0;
+    let stream_from = match get_count_raw_transactions(&config.pg_pool).await == 0 {
+        true => StreamFrom::Beginning,
+        false => StreamFrom::Stored,
+    };
 
-    let mut stream_transactions = config
+    let (mut stream_transactions, offsets) = config
         .transaction_consumer
-        .stream_until_highest_offsets(reset)
+        .stream_until_highest_offsets(stream_from)
         .await
         .expect("cant get highest offsets stream transactions");
 
@@ -86,14 +105,23 @@ async fn parse_kafka_transactions(
         }
 
         if raw_transactions.len() >= 10_000 {
-            insert_raw_transactions(&mut raw_transactions, &config.pg_pool).await.expect("cant insert raw_transactions: rip db");
+            insert_raw_transactions(&mut raw_transactions, &config.pg_pool)
+                .await
+                .expect("cant insert raw_transactions: rip db");
+
             produced_transaction.commit().unwrap();
-            log::info!("COMMIT KAFKA 10_000 parsed transactions timestamp_block {} date: {}", transaction_time, NaiveDateTime::from_timestamp(transaction_time, 0));
+            log::info!(
+                "COMMIT KAFKA 10_000 parsed transactions timestamp_block {} date: {}",
+                transaction_time,
+                NaiveDateTime::from_timestamp(transaction_time, 0)
+            );
         }
     }
 
     if !raw_transactions.is_empty() {
-        insert_raw_transactions(&mut raw_transactions, &config.pg_pool).await.expect("cant insert raw_transaction: rip db");
+        insert_raw_transactions(&mut raw_transactions, &config.pg_pool)
+            .await
+            .expect("cant insert raw_transaction: rip db");
     }
 
     {
@@ -112,7 +140,7 @@ async fn parse_kafka_transactions(
     let mut i = 0;
     let mut stream_transactions = config
         .transaction_consumer
-        .stream_transactions(false)
+        .stream_transactions(StreamFrom::Offsets(offsets))
         .await
         .expect("cant get stream transactions");
 
