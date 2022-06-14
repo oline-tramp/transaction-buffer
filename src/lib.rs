@@ -2,7 +2,6 @@ pub mod drop_base;
 pub mod models;
 mod sqlx_client;
 
-use std::intrinsics::offset;
 use crate::models::{BufferedConsumerChannels, BufferedConsumerConfig, RawTransaction};
 use crate::sqlx_client::{
     create_table_raw_transactions, get_count_not_processed_raw_transactions,
