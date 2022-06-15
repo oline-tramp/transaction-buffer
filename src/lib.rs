@@ -88,10 +88,16 @@ async fn parse_kafka_transactions(
         .await
         .expect("cant get highest offsets stream transactions");
 
+    let mut count = 0;
+    let mut min_time = i64::MAX;
     let mut raw_transactions = vec![];
     while let Some(produced_transaction) = stream_transactions.next().await {
+        count += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_time = transaction.time() as i64;
+        if transaction_time < min_time {
+            min_time = transaction_time;
+        }
 
         if extract_events(
             &transaction,
@@ -116,6 +122,8 @@ async fn parse_kafka_transactions(
             );
         }
     }
+
+    log::error!("count {}, time {}", count, min_time);
 
     if !raw_transactions.is_empty() {
         insert_raw_transactions(&mut raw_transactions, &config.pg_pool)
