@@ -89,15 +89,11 @@ async fn parse_kafka_transactions(
         .expect("cant get highest offsets stream transactions");
 
     let mut count = 0;
-    let mut min_time = i64::MAX;
     let mut raw_transactions = vec![];
     while let Some(produced_transaction) = stream_transactions.next().await {
         count += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_time = transaction.time() as i64;
-        if transaction_time < min_time {
-            min_time = transaction_time;
-        }
 
         if extract_events(
             &transaction,
@@ -109,21 +105,22 @@ async fn parse_kafka_transactions(
             raw_transactions.push(transaction.into());
         }
 
-        if raw_transactions.len() >= 10_000 {
-            insert_raw_transactions(&mut raw_transactions, &config.pg_pool)
-                .await
-                .expect("cant insert raw_transactions: rip db");
+        if count >= 10_000 {
+            if !raw_transactions.is_empty() {
+                insert_raw_transactions(&mut raw_transactions, &config.pg_pool)
+                    .await
+                    .expect("cant insert raw_transactions: rip db");
+            }
 
             produced_transaction.commit().unwrap();
             log::info!(
-                "COMMIT KAFKA 10_000 parsed transactions timestamp_block {} date: {}",
+                "COMMIT KAFKA 10_000 transactions timestamp_block {} date: {}",
                 transaction_time,
                 NaiveDateTime::from_timestamp(transaction_time, 0)
             );
+            count = 0;
         }
     }
-
-    log::error!("count {}, time {}", count, min_time);
 
     if !raw_transactions.is_empty() {
         insert_raw_transactions(&mut raw_transactions, &config.pg_pool)
