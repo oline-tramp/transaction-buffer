@@ -18,7 +18,7 @@ use indexer_lib::{
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, RwLock};
 use tokio::time::sleep;
 use ton_block::{GetRepresentationHash, Transaction};
 use ton_types::UInt256;
@@ -68,6 +68,13 @@ pub fn test_from_raw_transactions(
     }
 }
 
+async fn timer(time: Arc<RwLock<i32>>) {
+    loop {
+        *time.write().await += 1;
+        sleep(Duration::from_secs(1)).await;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn parse_kafka_transactions(
     config: BufferedConsumerConfig,
@@ -76,6 +83,13 @@ async fn parse_kafka_transactions(
     commit_rx: Receiver<()>,
 ) {
     create_table_raw_transactions(&config.pg_pool).await;
+
+    let time = Arc::new(RwLock::new(0));
+    {
+        let time = time.clone();
+        tokio::spawn(timer(time));
+    }
+
 
     let stream_from = match get_count_raw_transactions(&config.pg_pool).await == 0 {
         true => StreamFrom::Beginning,
@@ -105,7 +119,7 @@ async fn parse_kafka_transactions(
             raw_transactions.push(transaction.into());
         }
 
-        if count >= 10_000 {
+        if count >= config.buff_size || *time.read().await >= config.commit_time_secs {
             if !raw_transactions.is_empty() {
                 insert_raw_transactions(&mut raw_transactions, &config.pg_pool)
                     .await
@@ -114,11 +128,13 @@ async fn parse_kafka_transactions(
 
             produced_transaction.commit().unwrap();
             log::info!(
-                "COMMIT KAFKA 10_000 transactions timestamp_block {} date: {}",
+                "COMMIT KAFKA {} transactions timestamp_block {} date: {}",
+                count,
                 transaction_time,
                 NaiveDateTime::from_timestamp(transaction_time, 0)
             );
             count = 0;
+            *time.write().await = 0;
         }
     }
 

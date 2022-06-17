@@ -13,6 +13,8 @@ pub struct BufferedConsumerConfig {
     pub transaction_consumer: Arc<TransactionConsumer>,
     pub pg_pool: PgPool,
     pub events_to_parse: Vec<AnyExtractable>,
+    pub buff_size: i64,
+    pub commit_time_secs: i32,
 }
 
 impl BufferedConsumerConfig {
@@ -21,12 +23,16 @@ impl BufferedConsumerConfig {
         transaction_consumer: Arc<TransactionConsumer>,
         pg_pool: PgPool,
         events_to_parse: Vec<AnyExtractable>,
+        buff_size: i64,
+        commit_time_secs: i32,
     ) -> Self {
         Self {
             delay,
             transaction_consumer,
             pg_pool,
             events_to_parse,
+            buff_size,
+            commit_time_secs
         }
     }
 }
