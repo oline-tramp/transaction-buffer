@@ -1,7 +1,7 @@
-use sqlx::PgPool;
+use sqlx::{Pool, Postgres};
 use crate::sqlx_client::{create_drop_index_table, drop_functions, drop_tables, get_drop_index, insert_drop_index};
 
-pub async fn check_base(pg_pool: &PgPool, drop_index: i32) {
+pub async fn check_base(pg_pool: &Pool<Postgres>, drop_index: i32) {
     if let Ok(x) = get_drop_index(pg_pool).await {
         if x != drop_index {
             drop_tables(pg_pool).await;

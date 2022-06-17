@@ -2,7 +2,7 @@ use crate::models::RawTransactionFromDb;
 use anyhow::Result;
 use itertools::Itertools;
 use sqlx::postgres::PgArguments;
-use sqlx::{Arguments, PgPool};
+use sqlx::{Arguments, Pool};
 use sqlx::{Postgres, Row, Transaction};
 use std::cmp::Ordering;
 
@@ -79,7 +79,7 @@ const CREATE_INDEX_RAW_TRANSACTIONS_QUERY: &str = "CREATE INDEX IF NOT EXISTS ra
 
 pub async fn insert_raw_transaction(
     raw_transaction: RawTransactionFromDb,
-    pg_pool: &PgPool,
+    pg_pool: &Pool<Postgres>,
 ) -> Result<()> {
     let mut args = PgArguments::default();
     args.add(raw_transaction.transaction);
@@ -127,7 +127,7 @@ pub async fn get_raw_transactions(
         .map_err(anyhow::Error::new)
 }
 
-pub async fn get_count_raw_transactions(pg_pool: &PgPool) -> i64 {
+pub async fn get_count_raw_transactions(pg_pool: &Pool<Postgres>) -> i64 {
     let count: i64 = sqlx::query(COUNT_RAW_TRANSACTION_QUERY)
         .fetch_one(pg_pool)
         .await
@@ -137,7 +137,7 @@ pub async fn get_count_raw_transactions(pg_pool: &PgPool) -> i64 {
     count
 }
 
-pub async fn get_count_not_processed_raw_transactions(pg_pool: &PgPool) -> i64 {
+pub async fn get_count_not_processed_raw_transactions(pg_pool: &Pool<Postgres>) -> i64 {
     let count: i64 = sqlx::query(COUNT_RAW_NOT_PROCESSED_TRANSACTION_QUERY)
         .fetch_one(pg_pool)
         .await
@@ -147,7 +147,7 @@ pub async fn get_count_not_processed_raw_transactions(pg_pool: &PgPool) -> i64 {
     count
 }
 
-pub async fn create_table_raw_transactions(pg_pool: &PgPool) {
+pub async fn create_table_raw_transactions(pg_pool: &Pool<Postgres>) {
     if let Err(e) = sqlx::query(CREATE_TABLE_RAW_TRANSACTIONS_QUERY)
         .execute(pg_pool)
         .await
@@ -165,7 +165,7 @@ pub async fn create_table_raw_transactions(pg_pool: &PgPool) {
 
 pub async fn insert_raw_transactions(
     raw_transactions: &mut Vec<RawTransactionFromDb>,
-    pg_pool: &PgPool,
+    pg_pool: &Pool<Postgres>,
 ) -> Result<()> {
     let mut transaction: Vec<Vec<u8>> = Vec::new();
     let mut transaction_hash: Vec<Vec<u8>> = Vec::new();
@@ -193,7 +193,7 @@ pub async fn insert_raw_transactions(
     Ok(())
 }
 
-pub async fn create_drop_index_table(pg_pool: &PgPool) {
+pub async fn create_drop_index_table(pg_pool: &Pool<Postgres>) {
     if let Err(e) = sqlx::query(CREATE_TABLE_DROP_BASE_INDEX_QUERY)
         .execute(pg_pool)
         .await {
@@ -201,7 +201,7 @@ pub async fn create_drop_index_table(pg_pool: &PgPool) {
     }
 }
 
-pub async fn get_drop_index(pg_pool: &PgPool) -> Result<i32, anyhow::Error> {
+pub async fn get_drop_index(pg_pool: &Pool<Postgres>) -> Result<i32, anyhow::Error> {
     let index: i32 = sqlx::query(SELECT_DROP_BASE_INDEX_QUERY)
         .fetch_one(pg_pool)
         .await
@@ -209,7 +209,7 @@ pub async fn get_drop_index(pg_pool: &PgPool) -> Result<i32, anyhow::Error> {
     Ok(index)
 }
 
-pub async fn insert_drop_index(pg_pool: &PgPool, index: i32) {
+pub async fn insert_drop_index(pg_pool: &Pool<Postgres>, index: i32) {
     if let Err(e) = sqlx::query(INSERT_DROP_BASE_INDEX_QUERY)
         .bind(index)
         .execute(pg_pool).await {
@@ -217,14 +217,14 @@ pub async fn insert_drop_index(pg_pool: &PgPool, index: i32) {
     }
 }
 
-pub async fn drop_tables(pg_pool: &PgPool) {
+pub async fn drop_tables(pg_pool: &Pool<Postgres>) {
     if let Err(e) = sqlx::query(DROP_TABLES_QUERY)
         .execute(pg_pool).await {
         log::error!("drop tables ERROR {}", e);
     }
 }
 
-pub async fn drop_functions(pg_pool: &PgPool) {
+pub async fn drop_functions(pg_pool: &Pool<Postgres>) {
     if let Err(e) = sqlx::query(DROP_FUNCTIONS_QUERY)
         .execute(pg_pool).await {
         log::error!("drop functions ERROR {}", e);
