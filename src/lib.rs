@@ -126,7 +126,10 @@ async fn parse_kafka_transactions(
                     .expect("cant insert raw_transactions: rip db");
             }
 
-            produced_transaction.commit().unwrap();
+            if let Err(e) = produced_transaction.commit() {
+                log::error!("cant commit kafka, stream is down. ERROR {}", e);
+            }
+
             log::info!(
                 "COMMIT KAFKA {} transactions timestamp_block {} date: {}",
                 count,
@@ -180,7 +183,7 @@ async fn parse_kafka_transactions(
                 .expect("cant insert raw_transaction to db");
         }
 
-        produced_transaction.commit().unwrap();
+        produced_transaction.commit().expect("dead stream kafka");
 
         if i >= 5_000 {
             log::info!(
