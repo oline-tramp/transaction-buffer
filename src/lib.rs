@@ -60,6 +60,7 @@ pub fn test_from_raw_transactions(
         pg_pool,
         0,
         rx_commit,
+        false,
     ));
     BufferedConsumerChannels {
         rx_parsed_events,
@@ -91,9 +92,12 @@ async fn parse_kafka_transactions(
     }
 
 
-    let stream_from = match get_count_raw_transactions(&config.pg_pool).await == 0 {
-        true => StreamFrom::Beginning,
-        false => StreamFrom::Stored,
+    let (stream_from, notified) = match get_count_raw_transactions(&config.pg_pool).await == 0 {
+        true => (StreamFrom::Beginning, false),
+        false => {
+            notify_for_services.notify_one();
+            (StreamFrom::Stored, true)
+        },
     };
 
     let (mut stream_transactions, offsets) = config
@@ -157,6 +161,7 @@ async fn parse_kafka_transactions(
             pg_pool,
             config.delay,
             commit_rx,
+            notified
         ));
     }
 
@@ -203,8 +208,8 @@ async fn parse_raw_transaction(
     pg_pool: PgPool,
     secs_delay: i32,
     mut commit_rx: Receiver<()>,
+    mut notified: bool,
 ) {
-    let mut notified = false;
     let count_not_processed = get_count_not_processed_raw_transactions(&pg_pool).await;
     let mut i: i64 = 0;
 
