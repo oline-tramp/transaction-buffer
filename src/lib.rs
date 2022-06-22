@@ -246,7 +246,7 @@ async fn parse_raw_transaction(
             };
         }
         if !send_message.is_empty() {
-            log::error!("here");
+            log::error!("here {}", send_message.len());
             tx.send(send_message).await.expect("dead sender");
             commit_rx.next().await;
         }
