@@ -245,8 +245,10 @@ async fn parse_raw_transaction(
                 send_message.push((events, raw_transaction));
             };
         }
-        tx.send(send_message).await.expect("dead sender");
-        commit_rx.next().await;
+        if !send_message.is_empty() {
+            tx.send(send_message).await.expect("dead sender");
+            commit_rx.next().await;
+        }
         begin.commit().await.expect("cant commit db update");
 
         if !notified && i <= count_not_processed {
