@@ -129,13 +129,7 @@ async fn parse_kafka_transactions(
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_time = transaction.time() as i64;
 
-        if buff_extract_events(
-            &transaction,
-            transaction.hash().unwrap(),
-            &parser,
-        )
-        .is_some()
-        {
+        if buff_extract_events(&transaction, transaction.hash().unwrap(), &parser).is_some() {
             raw_transactions.push(transaction.into());
         }
 
@@ -191,13 +185,7 @@ async fn parse_kafka_transactions(
         i += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_timestamp = transaction.now;
-        if buff_extract_events(
-            &transaction,
-            transaction.hash().unwrap(),
-            &parser,
-        )
-        .is_some()
-        {
+        if buff_extract_events(&transaction, transaction.hash().unwrap(), &parser).is_some() {
             insert_raw_transaction(transaction.into(), &config.pg_pool)
                 .await
                 .expect("cant insert raw_transaction to db");
@@ -292,7 +280,9 @@ pub fn from_any_extractable_to_functions_events(
         };
         res
     });
+    funs.sort_by(|x, y| x.name.cmp(&y.name));
     funs.dedup_by(|x, y| x.name == y.name);
+    events.sort_by(|x, y| x.id.cmp(&y.id));
     events.dedup_by(|x, y| x.id == y.id);
     (funs, events)
 }
