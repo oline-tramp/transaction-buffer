@@ -280,8 +280,8 @@ pub fn from_any_extractable_to_functions_events(
         };
         res
     });
-    funs.sort_by(|x, y| x.name.cmp(&y.name));
-    funs.dedup_by(|x, y| x.name == y.name);
+    funs.sort_by_key(|x| x.get_function_id());
+    funs.dedup_by(|x, y| x.get_function_id() == y.get_function_id());
     events.sort_by(|x, y| x.id.cmp(&y.id));
     events.dedup_by(|x, y| x.id == y.id);
     (funs, events)
