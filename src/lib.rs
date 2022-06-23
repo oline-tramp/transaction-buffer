@@ -293,7 +293,7 @@ pub fn from_any_extractable_to_functions_events(
         res
     });
     funs.dedup_by(|x, y| x.name == y.name);
-    events.dedup_by(|x, y| x.name == y.name);
+    events.dedup_by(|x, y| x.id == y.id);
     (funs, events)
 }
 
