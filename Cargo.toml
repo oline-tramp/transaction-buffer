@@ -11,14 +11,17 @@ tokio = { version = "1", features = ["full"] }
 transaction-consumer = { git = "https://github.com/broxus/transaction-consumer" }
 async-trait = "0.1"
 anyhow = "1.0.38"
-chrono = { version = "*"}
+chrono = { version = "*" }
 log = { version = "0.4", features = ["std", "serde"] }
 ton_types = { git = "https://github.com/broxus/ton-labs-types" }
 ton_block = { git = "https://github.com/broxus/ton-labs-block.git" }
 futures = { version = "0.3" }
 indexer-lib = { git = "https://github.com/broxus/legacy-node-indexer" }
 sqlx = { version = "0.6.0", features = ["runtime-tokio-native-tls", "postgres", "uuid", "offline", "chrono", "json"] }
+nekoton-abi = { git = "https://github.com/broxus/nekoton.git" }
+ton_abi = { git = "https://github.com/broxus/ton-labs-abi.git" }
 
 [dev-dependencies]
 env_logger = "0.8.4"
 env-file-reader = "0.3.0"
+

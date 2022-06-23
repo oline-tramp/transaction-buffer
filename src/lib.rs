@@ -12,9 +12,13 @@ use chrono::{NaiveDateTime, Utc};
 use futures::channel::mpsc::{Receiver, Sender};
 use futures::SinkExt;
 use futures::StreamExt;
+use indexer_lib::AnyExtractableOutput::{Event, Function};
 use indexer_lib::{
-    AnyExtractable, AnyExtractableOutput, ExtractInput, ParsedOutput, TransactionExt,
+    AnyExtractable, AnyExtractableOutput, ParsedEvent, ParsedFunction, ParsedMessage, ParsedOutput,
+    TransactionExt,
 };
+use nekoton_abi::transaction_parser::{Extracted, ParsedType};
+use nekoton_abi::TransactionParser;
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -53,8 +57,17 @@ pub fn test_from_raw_transactions(
     let (tx_parsed_events, rx_parsed_events) = futures::channel::mpsc::channel(1);
     let (tx_commit, rx_commit) = futures::channel::mpsc::channel(1);
     let notify_for_services = Arc::new(Notify::new());
+    let (functions, events) = from_any_extractable_to_functions_events(events_to_parse);
+
+    let parser = TransactionParser::builder()
+        .function_in_list(&functions, false)
+        .functions_out_list(&functions, false)
+        .events_list(&events)
+        .build()
+        .unwrap();
+
     tokio::spawn(parse_raw_transaction(
-        events_to_parse,
+        parser,
         tx_parsed_events,
         notify_for_services.clone(),
         pg_pool,
@@ -83,13 +96,20 @@ async fn parse_kafka_transactions(
     commit_rx: Receiver<()>,
 ) {
     create_table_raw_transactions(&config.pg_pool).await;
+    let (functions, events) = from_any_extractable_to_functions_events(config.events_to_parse);
+
+    let parser = TransactionParser::builder()
+        .function_in_list(&functions, false)
+        .functions_out_list(&functions, false)
+        .events_list(&events)
+        .build()
+        .unwrap();
 
     let time = Arc::new(RwLock::new(0));
     {
         let time = time.clone();
         tokio::spawn(timer(time));
     }
-
 
     let stream_from = match get_count_raw_transactions(&config.pg_pool).await == 0 {
         true => StreamFrom::Beginning,
@@ -109,10 +129,10 @@ async fn parse_kafka_transactions(
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_time = transaction.time() as i64;
 
-        if extract_events(
+        if buff_extract_events(
             &transaction,
             transaction.hash().unwrap(),
-            &config.events_to_parse,
+            &parser,
         )
         .is_some()
         {
@@ -149,9 +169,9 @@ async fn parse_kafka_transactions(
 
     {
         let pg_pool = config.pg_pool.clone();
-        let events = config.events_to_parse.clone();
+        let parser = parser.clone();
         tokio::spawn(parse_raw_transaction(
-            events,
+            parser,
             tx_parsed_events,
             notify_for_services,
             pg_pool,
@@ -171,10 +191,10 @@ async fn parse_kafka_transactions(
         i += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_timestamp = transaction.now;
-        if extract_events(
+        if buff_extract_events(
             &transaction,
             transaction.hash().unwrap(),
-            &config.events_to_parse,
+            &parser,
         )
         .is_some()
         {
@@ -197,7 +217,7 @@ async fn parse_kafka_transactions(
 }
 
 async fn parse_raw_transaction(
-    events: Vec<AnyExtractable>,
+    parser: TransactionParser,
     mut tx: Sender<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
     notify: Arc<Notify>,
     pg_pool: PgPool,
@@ -240,13 +260,12 @@ async fn parse_raw_transaction(
             };
 
             if let Some(events) =
-                extract_events(&raw_transaction.data, raw_transaction.hash, &events)
+                buff_extract_events(&raw_transaction.data, raw_transaction.hash, &parser)
             {
                 send_message.push((events, raw_transaction));
             };
         }
         if !send_message.is_empty() {
-            log::error!("here {}", send_message.len());
             tx.send(send_message).await.expect("dead sender");
             commit_rx.next().await;
         }
@@ -263,52 +282,135 @@ async fn parse_raw_transaction(
     }
 }
 
+pub fn from_any_extractable_to_functions_events(
+    events: Vec<AnyExtractable>,
+) -> (Vec<ton_abi::Function>, Vec<ton_abi::Event>) {
+    events.into_iter().fold((vec![], vec![]), |mut res, x| {
+        match x {
+            AnyExtractable::Function(x) => res.0.push(x),
+            AnyExtractable::Event(y) => res.1.push(y),
+        };
+        res
+    })
+}
+
 pub fn extract_events(
     data: &Transaction,
     hash: UInt256,
     events: &[AnyExtractable],
 ) -> Option<ParsedOutput<AnyExtractableOutput>> {
-    ExtractInput {
-        transaction: data,
-        what_to_extract: events,
-        hash,
+    let (functions, events) = from_any_extractable_to_functions_events(events.to_vec());
+
+    let parser = TransactionParser::builder()
+        .function_in_list(&functions, false)
+        .functions_out_list(&functions, false)
+        .events_list(&events)
+        .build()
+        .unwrap();
+
+    if let Ok(extracted) = parser.parse(data) {
+        if !extracted.is_empty() {
+            return from_vec_extracted_to_any_extractable_output(extracted, hash, data.clone());
+        }
     }
-    .process()
-    .ok()
-    .flatten()
+
+    None
 }
 
-// struct BufferedTransactionConsumer {
-//     tx_consumer: TransactionConsumer,
-//     sqlx_client: PgPool,
-//     config: Config,
-//     notify: Arc<Notify>,
-// }
-//
-// struct Config {
-//     delay: Duration,
-//     sync_timestamp: i32,
-// }
-//
-// impl BufferedTransactionConsumer {
-//     pub fn new(sqlx_client: PgPool, config: Config, consumer: TransactionConsumer, notify: Arc<Notify>) -> Arc<Self> {
-//         Arc::new(Self {
-//             tx_consumer: consumer,
-//             sqlx_client,
-//             config,
-//             notify
-//         })
-//     }
-//
-//     pub fn spawn_listener(self: &Arc<Self>) -> ListenerHandle {
-//         let (tx, rx) = mpsc::channel(128);
-//     }
-// }
-//
-// struct ListenerHandle {}
-//
-// impl ListenerHandle {
-//     pub fn stream(&self) -> UnboundedReceiver<RawTransaction> {
-//         unimplemented!()
-//     }
-// }
+pub fn buff_extract_events(
+    data: &Transaction,
+    hash: UInt256,
+    parser: &TransactionParser,
+) -> Option<ParsedOutput<AnyExtractableOutput>> {
+    if let Ok(extracted) = parser.parse(data) {
+        if !extracted.is_empty() {
+            return from_vec_extracted_to_any_extractable_output(extracted, hash, data.clone());
+        }
+    }
+    None
+}
+
+pub fn from_vec_extracted_to_any_extractable_output(
+    extracted: Vec<Extracted>,
+    tx_hash: UInt256,
+    tx: Transaction,
+) -> Option<ParsedOutput<AnyExtractableOutput>> {
+    if extracted.is_empty() {
+        return None;
+    }
+
+    let mut res = ParsedOutput {
+        transaction: tx,
+        hash: tx_hash,
+        output: vec![],
+    };
+
+    for x in extracted {
+        if !x.is_in_message {
+            continue;
+        }
+
+        let any_extractable = match x.parsed_type {
+            ParsedType::FunctionInput => Function(ParsedFunction {
+                function_name: x.name.to_string(),
+                function_id: x.function_id,
+                input: Some(ParsedMessage {
+                    tokens: x.tokens,
+                    hash: <[u8; 32]>::try_from(x.message.hash().unwrap().into_vec()).unwrap(),
+                }),
+                output: None,
+            }),
+            ParsedType::FunctionOutput => Function(ParsedFunction {
+                function_name: x.name.to_string(),
+                function_id: x.function_id,
+                input: None,
+                output: Some(ParsedMessage {
+                    tokens: x.tokens,
+                    hash: <[u8; 32]>::try_from(x.message.hash().unwrap().into_vec()).unwrap(),
+                }),
+            }),
+            ParsedType::Event => Event(ParsedEvent {
+                function_name: x.name.to_string(),
+                event_id: x.function_id,
+                input: Some(x.tokens).unwrap_or_default(),
+                message_hash: <[u8; 32]>::try_from(x.message.hash().unwrap().into_vec()).unwrap(),
+            }),
+            ParsedType::BouncedFunction => continue,
+        };
+        res.output.push(any_extractable);
+    }
+
+    if res.output.is_empty() {
+        return None;
+    }
+
+    Some(res)
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{extract_events, from_vec_extracted_to_any_extractable_output};
+    use nekoton_abi::TransactionParser;
+    use ton_block::{Deserializable, GetRepresentationHash};
+
+    #[test]
+    fn test_empty() {
+        let tx = "te6ccgECCQEAAgMAA7d3xF4oX2oWEwg5M5aR8xwgw6PQR7NiQn3ingdzt6NLnlAAAYzbaqqQGGge6YdqXzRGzEt95+94zU1ZfCjSJTBeSEvV1TdfJArAAAGM2xx3CCYpu36QADSAISBBqAUEAQIZBHtJDuaygBiAIH1iEQMCAG/Jh6EgTBRYQAAAAAAABAACAAAAAlv8RbySHn7Zsc6jPU5HH77NJiEltjMklhaKitL0Hn58QFAWDACeSFFMPQkAAAAAAAAAAAFJAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACCctRvCOj0IytqL1T55yj5A4CiFWjMA24f39CflxqMd3B4ruUkaHcmjwepyx+Zq9yebin0HUaTR+nX46leelD4ZXUCAeAIBgEB3wcAsWgA+IvFC+1CwmEHJnLSPmOEGHR6CPZsSE+8U8DudvRpc8sAOoJ7mWzKNw9aN8zgsFlHCBKE/DKTYv4bm/dZb5x149AQ6h5ywAYUWGAAADGbbVVSBMU3b9JAALloAdQT3MtmUbh60b5nBYLKOECUJ+GUmxfw3N+6y3zjrx6BAB8ReKF9qFhMIOTOWkfMcIMOj0EezYkJ94p4Hc7ejS55UO5rKAAGFFhgAAAxm2z5xITFN2/CP/urf0A=";
+        let tx = ton_block::Transaction::construct_from_base64(&tx).unwrap();
+        let abi = r#"{"ABI version":2,"version":"2.2","header":["pubkey","time"],"functions":[{"name":"constructor","inputs":[],"outputs":[]},{"name":"acceptUpgrade","inputs":[{"name":"code","type":"cell"},{"name":"newVersion","type":"uint8"}],"outputs":[]},{"name":"receiveTokenDecimals","inputs":[{"name":"decimals","type":"uint8"}],"outputs":[]},{"name":"setManager","inputs":[{"name":"_manager","type":"address"}],"outputs":[]},{"name":"removeToken","inputs":[{"name":"token","type":"address"}],"outputs":[]},{"name":"addToken","inputs":[{"name":"token","type":"address"}],"outputs":[]},{"name":"setCanon","inputs":[{"name":"token","type":"address"}],"outputs":[]},{"name":"enableToken","inputs":[{"name":"token","type":"address"}],"outputs":[]},{"name":"enableAll","inputs":[],"outputs":[]},{"name":"disableToken","inputs":[{"name":"token","type":"address"}],"outputs":[]},{"name":"disableAll","inputs":[],"outputs":[]},{"name":"getCanon","inputs":[{"name":"answerId","type":"uint32"}],"outputs":[{"name":"value0","type":"address"},{"components":[{"name":"decimals","type":"uint8"},{"name":"enabled","type":"bool"}],"name":"value1","type":"tuple"}]},{"name":"getTokens","inputs":[{"name":"answerId","type":"uint32"}],"outputs":[{"components":[{"name":"decimals","type":"uint8"},{"name":"enabled","type":"bool"}],"name":"_tokens","type":"map(address,tuple)"},{"name":"_canon","type":"address"}]},{"name":"onAcceptTokensBurn","inputs":[{"name":"_amount","type":"uint128"},{"name":"walletOwner","type":"address"},{"name":"value2","type":"address"},{"name":"remainingGasTo","type":"address"},{"name":"payload","type":"cell"}],"outputs":[]},{"name":"transferOwnership","inputs":[{"name":"newOwner","type":"address"}],"outputs":[]},{"name":"renounceOwnership","inputs":[],"outputs":[]},{"name":"owner","inputs":[],"outputs":[{"name":"owner","type":"address"}]},{"name":"_randomNonce","inputs":[],"outputs":[{"name":"_randomNonce","type":"uint256"}]},{"name":"version","inputs":[],"outputs":[{"name":"version","type":"uint8"}]},{"name":"manager","inputs":[],"outputs":[{"name":"manager","type":"address"}]}],"data":[{"key":1,"name":"_randomNonce","type":"uint256"},{"key":2,"name":"proxy","type":"address"}],"events":[{"name":"OwnershipTransferred","inputs":[{"name":"previousOwner","type":"address"},{"name":"newOwner","type":"address"}],"outputs":[]}],"fields":[{"name":"_pubkey","type":"uint256"},{"name":"_timestamp","type":"uint64"},{"name":"_constructorFlag","type":"bool"},{"name":"owner","type":"address"},{"name":"_randomNonce","type":"uint256"},{"name":"proxy","type":"address"},{"name":"version","type":"uint8"},{"components":[{"name":"decimals","type":"uint8"},{"name":"enabled","type":"bool"}],"name":"tokens","type":"map(address,tuple)"},{"name":"manager","type":"address"},{"name":"canon","type":"address"}]}"#;
+
+        let abi = ton_abi::Contract::load(abi).unwrap();
+
+        let funs = abi.functions.values().cloned().collect::<Vec<_>>();
+        let parser = TransactionParser::builder()
+            .function_in_list(&funs, false)
+            .functions_out_list(&funs, false)
+            .build()
+            .unwrap();
+        let test = parser.parse(&tx).unwrap();
+        let test1 =
+            from_vec_extracted_to_any_extractable_output(test, tx.hash().unwrap(), tx.clone())
+                .unwrap();
+        dbg!(test1);
+    }
+}
