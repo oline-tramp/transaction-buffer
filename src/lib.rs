@@ -285,13 +285,16 @@ async fn parse_raw_transaction(
 pub fn from_any_extractable_to_functions_events(
     events: Vec<AnyExtractable>,
 ) -> (Vec<ton_abi::Function>, Vec<ton_abi::Event>) {
-    events.into_iter().fold((vec![], vec![]), |mut res, x| {
+    let (mut funs, mut events) = events.into_iter().fold((vec![], vec![]), |mut res, x| {
         match x {
             AnyExtractable::Function(x) => res.0.push(x),
             AnyExtractable::Event(y) => res.1.push(y),
         };
         res
-    })
+    });
+    funs.dedup_by(|x, y| x.name == y.name);
+    events.dedup_by(|x, y| x.name == y.name);
+    (funs, events)
 }
 
 pub fn extract_events(
