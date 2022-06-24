@@ -1,6 +1,7 @@
 pub mod drop_base;
 pub mod models;
 mod sqlx_client;
+mod cache;
 
 use crate::models::{BufferedConsumerChannels, BufferedConsumerConfig, RawTransaction};
 use crate::sqlx_client::{

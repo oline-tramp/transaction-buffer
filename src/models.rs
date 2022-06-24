@@ -32,14 +32,13 @@ impl BufferedConsumerConfig {
             pg_pool,
             events_to_parse,
             buff_size,
-            commit_time_secs
+            commit_time_secs,
         }
     }
 }
 
 pub struct BufferedConsumerChannels {
-    pub rx_parsed_events:
-        Receiver<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
+    pub rx_parsed_events: Receiver<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
     pub tx_commit: Sender<()>,
     pub notify_for_services: Arc<Notify>,
 }
@@ -60,17 +59,15 @@ pub struct RawTransaction {
     pub data: Transaction,
 }
 
-impl TryFrom<RawTransactionFromDb> for RawTransaction {
-    type Error = anyhow::Error;
-
-    fn try_from(value: RawTransactionFromDb) -> std::result::Result<Self, Self::Error> {
+impl From<RawTransactionFromDb> for RawTransaction {
+    fn from(value: RawTransactionFromDb) -> Self {
         let transaction =
-            ton_block::Transaction::construct_from_bytes(value.transaction.as_slice())?;
+            ton_block::Transaction::construct_from_bytes(value.transaction.as_slice()).unwrap();
 
-        Ok(RawTransaction {
+        RawTransaction {
             hash: UInt256::from_be_bytes(&value.transaction_hash),
             data: transaction,
-        })
+        }
     }
 }
 
