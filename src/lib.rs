@@ -1,13 +1,14 @@
+mod cache;
 pub mod drop_base;
 pub mod models;
 mod sqlx_client;
-mod cache;
 
+use crate::cache::RawCache;
 use crate::models::{BufferedConsumerChannels, BufferedConsumerConfig, RawTransaction};
 use crate::sqlx_client::{
     create_table_raw_transactions, get_count_not_processed_raw_transactions,
     get_count_raw_transactions, get_raw_transactions, insert_raw_transaction,
-    insert_raw_transactions,
+    insert_raw_transactions, update_raw_transactions_set_processed_true,
 };
 use chrono::{NaiveDateTime, Utc};
 use futures::channel::mpsc::{Receiver, Sender};
@@ -74,6 +75,7 @@ pub fn test_from_raw_transactions(
         pg_pool,
         0,
         rx_commit,
+        RawCache::new(),
     ));
     BufferedConsumerChannels {
         rx_parsed_events,
@@ -105,6 +107,8 @@ async fn parse_kafka_transactions(
         .events_list(&events)
         .build()
         .unwrap();
+
+    let raw_cache = RawCache::new();
 
     let time = Arc::new(RwLock::new(0));
     {
@@ -162,9 +166,12 @@ async fn parse_kafka_transactions(
             .expect("cant insert raw_transaction: rip db");
     }
 
+    log::info!("kafka synced");
+
     {
         let pg_pool = config.pg_pool.clone();
         let parser = parser.clone();
+        let raw_cache = raw_cache.clone();
         tokio::spawn(parse_raw_transaction(
             parser,
             tx_parsed_events,
@@ -172,6 +179,7 @@ async fn parse_kafka_transactions(
             pg_pool,
             config.delay,
             commit_rx,
+            raw_cache,
         ));
     }
 
@@ -187,9 +195,10 @@ async fn parse_kafka_transactions(
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_timestamp = transaction.now;
         if buff_extract_events(&transaction, transaction.hash().unwrap(), &parser).is_some() {
-            insert_raw_transaction(transaction.into(), &config.pg_pool)
+            insert_raw_transaction(transaction.clone().into(), &config.pg_pool)
                 .await
                 .expect("cant insert raw_transaction to db");
+            raw_cache.insert_raw(transaction.into()).await;
         }
 
         produced_transaction.commit().expect("dead stream kafka");
@@ -212,8 +221,8 @@ async fn parse_raw_transaction(
     pg_pool: PgPool,
     secs_delay: i32,
     mut commit_rx: Receiver<()>,
+    raw_cache: RawCache,
 ) {
-    let mut notified = false;
     let count_not_processed = get_count_not_processed_raw_transactions(&pg_pool).await;
     let mut i: i64 = 0;
 
@@ -223,17 +232,13 @@ async fn parse_raw_transaction(
         let mut begin = pg_pool.begin().await.expect("cant get pg transaction");
 
         let raw_transactions_from_db =
-            get_raw_transactions(1000, timestamp_now - secs_delay, &mut begin)
+            get_raw_transactions(10_000, timestamp_now - secs_delay, &mut begin)
                 .await
                 .unwrap_or_default();
 
         if raw_transactions_from_db.is_empty() {
-            if !notified {
-                notify.notify_one();
-                notified = true;
-            }
-            sleep(Duration::from_secs(1)).await;
-            continue;
+            notify.notify_one();
+            break;
         }
 
         let mut send_message = vec![];
@@ -260,14 +265,41 @@ async fn parse_raw_transaction(
         }
         begin.commit().await.expect("cant commit db update");
 
-        if !notified && i <= count_not_processed {
+        if i >= count_not_processed {
+            log::info!("end parse. synced");
+            notify.notify_one();
+            break;
+        } else {
             log::info!("parsing {}/{}", i, count_not_processed);
         }
+    }
 
-        if !notified && i >= count_not_processed {
-            notify.notify_one();
-            notified = true;
+    raw_cache.fill_raws(&pg_pool).await;
+
+    loop {
+        let (raw_transactions, times) = raw_cache.get_raws(secs_delay).await;
+        if raw_transactions.is_empty() {
+            sleep(Duration::from_secs(1)).await;
+            continue;
         }
+
+        let mut send_message = vec![];
+        for raw_transaction in raw_transactions {
+            i += 1;
+
+            if let Some(events) =
+                buff_extract_events(&raw_transaction.data, raw_transaction.hash, &parser)
+            {
+                send_message.push((events, raw_transaction));
+            };
+        }
+
+        if !send_message.is_empty() {
+            tx.send(send_message).await.expect("dead sender");
+            commit_rx.next().await;
+        }
+
+        update_raw_transactions_set_processed_true(&pg_pool, times).await;
     }
 }
 

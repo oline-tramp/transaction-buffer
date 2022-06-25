@@ -1,7 +1,8 @@
 use anyhow::Context;
 use futures::channel::mpsc::{Receiver, Sender};
 use indexer_lib::{AnyExtractable, AnyExtractableOutput, ParsedOutput};
-use sqlx::PgPool;
+use sqlx::postgres::PgRow;
+use sqlx::{PgPool, Row};
 use std::sync::Arc;
 use tokio::sync::Notify;
 use ton_block::{Deserializable, GetRepresentationHash, Serializable, Transaction};
@@ -53,6 +54,19 @@ pub struct RawTransactionFromDb {
     pub processed: bool,
 }
 
+impl From<PgRow> for RawTransactionFromDb {
+    fn from(x: PgRow) -> Self {
+        RawTransactionFromDb {
+            transaction: x.get(0),
+            transaction_hash: x.get(1),
+            timestamp_block: x.get(2),
+            timestamp_lt: x.get(3),
+            created_at: x.get(4),
+            processed: x.get(5),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RawTransaction {
     pub hash: UInt256,
@@ -83,6 +97,15 @@ impl From<Transaction> for RawTransactionFromDb {
             timestamp_lt: x.lt as i64,
             created_at: 0,
             processed: false,
+        }
+    }
+}
+
+impl From<Transaction> for RawTransaction {
+    fn from(x: Transaction) -> Self {
+        RawTransaction {
+            hash: x.hash().unwrap(),
+            data: x,
         }
     }
 }

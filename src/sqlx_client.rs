@@ -24,6 +24,8 @@ WHERE (timestamp_block, timestamp_lt) IN (SELECT timestamp_block, timestamp_lt
                                           LIMIT $2)
 returning *;";
 
+const GET_ALL_RAW_TRANSACTIONS_QUERY: &str = "SELECT * FROM raw_transactions WHERE processed = false ORDER BY (timestamp_block, timestamp_lt);";
+
 const CREATE_TABLE_RAW_TRANSACTIONS_QUERY: &str = "CREATE TABLE IF NOT EXISTS raw_transactions
 (
     transaction      BYTEA   NOT NULL,
@@ -41,7 +43,8 @@ const CREATE_TABLE_DROP_BASE_INDEX_QUERY: &str = "CREATE TABLE IF NOT EXISTS dro
     value INTEGER NOT NULL
 );";
 
-const INSERT_DROP_BASE_INDEX_QUERY: &str = "INSERT INTO drop_base_index (name, value) values ('index', $1);";
+const INSERT_DROP_BASE_INDEX_QUERY: &str =
+    "INSERT INTO drop_base_index (name, value) values ('index', $1);";
 
 const SELECT_DROP_BASE_INDEX_QUERY: &str = "SELECT value FROM drop_base_index;";
 
@@ -77,6 +80,8 @@ $$;";
 
 const CREATE_INDEX_RAW_TRANSACTIONS_QUERY: &str = "CREATE INDEX IF NOT EXISTS raw_transactions_ix_ttp ON raw_transactions (timestamp_block, timestamp_lt, processed);";
 
+const UPDATE_RAW_TRANSACTIONS_PROCESSED_TRUE_QUERY: &str = "UPDATE raw_transactions SET processed = true WHERE (timestamp_block, timestamp_lt) IN (SELECT * FROM UNNEST ($1, $2));";
+
 pub async fn insert_raw_transaction(
     raw_transaction: RawTransactionFromDb,
     pg_pool: &Pool<Postgres>,
@@ -109,14 +114,7 @@ pub async fn get_raw_transactions(
         .await
         .map(|y| {
             y.into_iter()
-                .map(|x| RawTransactionFromDb {
-                    transaction: x.get(0),
-                    transaction_hash: x.get(1),
-                    timestamp_block: x.get(2),
-                    timestamp_lt: x.get(3),
-                    created_at: x.get(4),
-                    processed: x.get(5),
-                })
+                .map(RawTransactionFromDb::from)
                 .sorted_by(|x, y| match x.timestamp_block.cmp(&y.timestamp_block) {
                     Ordering::Less => Ordering::Less,
                     Ordering::Equal => x.timestamp_lt.cmp(&y.timestamp_lt),
@@ -196,7 +194,8 @@ pub async fn insert_raw_transactions(
 pub async fn create_drop_index_table(pg_pool: &Pool<Postgres>) {
     if let Err(e) = sqlx::query(CREATE_TABLE_DROP_BASE_INDEX_QUERY)
         .execute(pg_pool)
-        .await {
+        .await
+    {
         log::error!("create table drop_index ERROR {}", e);
     }
 }
@@ -212,21 +211,74 @@ pub async fn get_drop_index(pg_pool: &Pool<Postgres>) -> Result<i32, anyhow::Err
 pub async fn insert_drop_index(pg_pool: &Pool<Postgres>, index: i32) {
     if let Err(e) = sqlx::query(INSERT_DROP_BASE_INDEX_QUERY)
         .bind(index)
-        .execute(pg_pool).await {
+        .execute(pg_pool)
+        .await
+    {
         log::error!("insert index drop ERROR {}", e);
     }
 }
 
 pub async fn drop_tables(pg_pool: &Pool<Postgres>) {
-    if let Err(e) = sqlx::query(DROP_TABLES_QUERY)
-        .execute(pg_pool).await {
+    if let Err(e) = sqlx::query(DROP_TABLES_QUERY).execute(pg_pool).await {
         log::error!("drop tables ERROR {}", e);
     }
 }
 
 pub async fn drop_functions(pg_pool: &Pool<Postgres>) {
-    if let Err(e) = sqlx::query(DROP_FUNCTIONS_QUERY)
-        .execute(pg_pool).await {
+    if let Err(e) = sqlx::query(DROP_FUNCTIONS_QUERY).execute(pg_pool).await {
         log::error!("drop functions ERROR {}", e);
+    }
+}
+
+pub async fn get_all_raw_transactions(
+    pg_pool: &Pool<Postgres>,
+) -> Result<Vec<RawTransactionFromDb>, anyhow::Error> {
+    sqlx::query(GET_ALL_RAW_TRANSACTIONS_QUERY)
+        .fetch_all(pg_pool)
+        .await
+        .map(|x| x.into_iter().map(RawTransactionFromDb::from).collect_vec())
+        .map_err(anyhow::Error::new)
+}
+
+pub async fn update_raw_transactions_set_processed_true(
+    pg_pool: &Pool<Postgres>,
+    times: Vec<(i32, i64)>,
+) {
+    let (timestamp_blocks, timestamp_lts) =
+        times
+            .into_iter()
+            .fold((vec![], vec![]), |(mut block, mut lt), x| {
+                block.push(x.0);
+                lt.push(x.1);
+                (block, lt)
+            });
+
+    let mut args = PgArguments::default();
+    args.add(timestamp_blocks);
+    args.add(timestamp_lts);
+
+    if let Err(e) = sqlx::query_with(UPDATE_RAW_TRANSACTIONS_PROCESSED_TRUE_QUERY, args)
+        .execute(pg_pool)
+        .await
+    {
+        log::error!("update raw transactions processed true ERROR {}", e);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use sqlx::PgPool;
+    use crate::{insert_raw_transactions, update_raw_transactions_set_processed_true};
+    use crate::models::RawTransactionFromDb;
+
+    #[tokio::test]
+    async fn test_insert() {
+        let pg_pool =
+            PgPool::connect("postgresql://postgres:postgres@localhost:5432/test_base")
+                .await
+                .unwrap();
+
+        let times = (vec![(1656071372, 27915771000001_i64), (1656070201, 27915328000006)]);
+        update_raw_transactions_set_processed_true(&pg_pool, times).await;
     }
 }

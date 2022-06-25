@@ -1,4 +1,4 @@
-use crate::models::RawTransactionFromDb;
+use crate::sqlx_client::get_all_raw_transactions;
 use crate::RawTransaction;
 use chrono::Utc;
 use itertools::Itertools;
@@ -7,27 +7,28 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+#[derive(Clone)]
 pub struct RawCache(Arc<RwLock<Vec<RawTransaction>>>);
 
-pub async fn get_raws() -> Vec<RawTransactionFromDb> {
-    todo!()
-}
-
 impl RawCache {
-    async fn new(pg_pool: &Pool<Postgres>) -> Self {
-        let raw_transactions = get_raws()
-            .await
-            .into_iter()
-            .map(RawTransaction::from)
-            .collect_vec();
-        Self(Arc::new(RwLock::new(raw_transactions)))
+    pub fn new() -> Self {
+        Self(Arc::new(RwLock::new(vec![])))
     }
 
-    async fn insert_raw(&self, raw: RawTransaction) {
+    pub async fn fill_raws(&self, pg_pool: &Pool<Postgres>) {
+        let raw_transactions = get_all_raw_transactions(pg_pool)
+            .await
+            .map(|x| x.into_iter().map(RawTransaction::from).collect_vec())
+            .unwrap_or_default();
+
+        *self.0.write().await = raw_transactions;
+    }
+
+    pub async fn insert_raw(&self, raw: RawTransaction) {
         self.0.write().await.push(raw);
     }
 
-    async fn get_raws(&self, delay: i32) -> Vec<RawTransaction> {
+    pub async fn get_raws(&self, delay: i32) -> (Vec<RawTransaction>, Vec<(i32, i64)>) {
         let timestamp_now = Utc::now().timestamp() as i32;
         let mut lock = self.0.write().await;
 
@@ -51,6 +52,10 @@ impl RawCache {
                 Ordering::Equal => x.data.lt.cmp(&y.data.lt),
                 Ordering::Greater => Ordering::Greater,
             })
-            .collect_vec()
+            .fold((vec![], vec![]), |(mut raws, mut times), x|  {
+                times.push((x.data.now as i32, x.data.lt as i64));
+                raws.push(x);
+                (raws, times)
+            })
     }
 }
