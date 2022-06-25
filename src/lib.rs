@@ -285,8 +285,6 @@ async fn parse_raw_transaction(
 
         let mut send_message = vec![];
         for raw_transaction in raw_transactions {
-            i += 1;
-
             if let Some(events) =
                 buff_extract_events(&raw_transaction.data, raw_transaction.hash, &parser)
             {
@@ -362,6 +360,11 @@ pub fn from_vec_extracted_to_any_extractable_output(
     tx: Transaction,
 ) -> Option<ParsedOutput<AnyExtractableOutput>> {
     if extracted.is_empty() {
+        return None;
+    }
+
+    if let Ok(false) = tx.read_description().map(|x| x.is_aborted()) {
+    } else {
         return None;
     }
 
