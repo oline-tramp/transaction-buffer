@@ -232,7 +232,7 @@ async fn parse_raw_transaction(
         let mut begin = pg_pool.begin().await.expect("cant get pg transaction");
 
         let raw_transactions_from_db =
-            get_raw_transactions(10_000, timestamp_now - secs_delay, &mut begin)
+            get_raw_transactions(1000, timestamp_now - secs_delay, &mut begin)
                 .await
                 .unwrap_or_default();
 
