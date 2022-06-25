@@ -340,9 +340,9 @@ pub fn from_vec_extracted_to_any_extractable_output(
     };
 
     for x in extracted {
-        // if !x.is_in_message {
-        //     continue;
-        // }
+        if x.parsed_type != ParsedType::Event && !x.is_in_message {
+            continue;
+        }
 
         let any_extractable = match x.parsed_type {
             ParsedType::FunctionInput => Function(ParsedFunction {
