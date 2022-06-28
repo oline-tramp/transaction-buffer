@@ -1,6 +1,5 @@
 use crate::sqlx_client::get_all_raw_transactions;
 use crate::RawTransaction;
-use chrono::Utc;
 use itertools::Itertools;
 use sqlx::{Pool, Postgres};
 use std::cmp::Ordering;
@@ -28,15 +27,14 @@ impl RawCache {
         self.0.write().await.push(raw);
     }
 
-    pub async fn get_raws(&self, delay: i32) -> (Vec<RawTransaction>, Vec<(i32, i64)>) {
-        let timestamp_now = Utc::now().timestamp() as i32;
+    pub async fn get_raws(&self, last_timestamp_block: i32) -> (Vec<RawTransaction>, Vec<(i32, i64)>) {
         let mut lock = self.0.write().await;
 
         let (res, cache) =
             lock.drain(..)
                 .into_iter()
                 .fold((vec![], vec![]), |(mut res, mut cache), x| {
-                    if (x.data.now as i32) < (timestamp_now - delay) {
+                    if (x.data.now as i32) < last_timestamp_block {
                         res.push(x)
                     } else {
                         cache.push(x)

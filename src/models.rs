@@ -10,7 +10,6 @@ use ton_types::UInt256;
 use transaction_consumer::TransactionConsumer;
 
 pub struct BufferedConsumerConfig {
-    pub delay: i32,
     pub transaction_consumer: Arc<TransactionConsumer>,
     pub pg_pool: PgPool,
     pub events_to_parse: Vec<AnyExtractable>,
@@ -20,7 +19,6 @@ pub struct BufferedConsumerConfig {
 
 impl BufferedConsumerConfig {
     pub fn new(
-        delay: i32,
         transaction_consumer: Arc<TransactionConsumer>,
         pg_pool: PgPool,
         events_to_parse: Vec<AnyExtractable>,
@@ -28,7 +26,6 @@ impl BufferedConsumerConfig {
         commit_time_secs: i32,
     ) -> Self {
         Self {
-            delay,
             transaction_consumer,
             pg_pool,
             events_to_parse,

@@ -10,7 +10,7 @@ use crate::sqlx_client::{
     get_count_raw_transactions, get_raw_transactions, insert_raw_transaction,
     insert_raw_transactions, update_raw_transactions_set_processed_true,
 };
-use chrono::{NaiveDateTime, Utc};
+use chrono::NaiveDateTime;
 use futures::channel::mpsc::{Receiver, Sender};
 use futures::SinkExt;
 use futures::StreamExt;
@@ -68,14 +68,16 @@ pub fn test_from_raw_transactions(
         .build()
         .unwrap();
 
+    let timestamp_last_block = Arc::new(RwLock::new(i32::MAX));
+
     tokio::spawn(parse_raw_transaction(
         parser,
         tx_parsed_events,
         notify_for_services.clone(),
         pg_pool,
-        0,
         rx_commit,
         RawCache::new(),
+        timestamp_last_block,
     ));
     BufferedConsumerChannels {
         rx_parsed_events,
@@ -127,12 +129,15 @@ async fn parse_kafka_transactions(
         .await
         .expect("cant get highest offsets stream transactions");
 
+    let timestamp_last_block = Arc::new(RwLock::new(0_i32));
+
     let mut count = 0;
     let mut raw_transactions = vec![];
     while let Some(produced_transaction) = stream_transactions.next().await {
         count += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_time = transaction.time() as i64;
+        *timestamp_last_block.write().await = transaction_time as i32;
 
         if buff_extract_events(&transaction, transaction.hash().unwrap(), &parser).is_some() {
             raw_transactions.push(transaction.into());
@@ -172,14 +177,15 @@ async fn parse_kafka_transactions(
         let pg_pool = config.pg_pool.clone();
         let parser = parser.clone();
         let raw_cache = raw_cache.clone();
+        let timestamp_last_block = timestamp_last_block.clone();
         tokio::spawn(parse_raw_transaction(
             parser,
             tx_parsed_events,
             notify_for_services,
             pg_pool,
-            config.delay,
             commit_rx,
             raw_cache,
+            timestamp_last_block,
         ));
     }
 
@@ -194,6 +200,7 @@ async fn parse_kafka_transactions(
         i += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_timestamp = transaction.now;
+        *timestamp_last_block.write().await = transaction_timestamp as i32;
         if buff_extract_events(&transaction, transaction.hash().unwrap(), &parser).is_some() {
             insert_raw_transaction(transaction.clone().into(), &config.pg_pool)
                 .await
@@ -219,20 +226,18 @@ async fn parse_raw_transaction(
     mut tx: Sender<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
     notify: Arc<Notify>,
     pg_pool: PgPool,
-    secs_delay: i32,
     mut commit_rx: Receiver<()>,
     raw_cache: RawCache,
+    timestamp_last_block: Arc<RwLock<i32>>,
 ) {
     let count_not_processed = get_count_not_processed_raw_transactions(&pg_pool).await;
     let mut i: i64 = 0;
 
     loop {
-        let timestamp_now = Utc::now().timestamp() as i32;
-
         let mut begin = pg_pool.begin().await.expect("cant get pg transaction");
 
         let raw_transactions_from_db =
-            get_raw_transactions(1000, timestamp_now - secs_delay, &mut begin)
+            get_raw_transactions(1000, *timestamp_last_block.read().await, &mut begin)
                 .await
                 .unwrap_or_default();
 
@@ -277,7 +282,8 @@ async fn parse_raw_transaction(
     raw_cache.fill_raws(&pg_pool).await;
 
     loop {
-        let (raw_transactions, times) = raw_cache.get_raws(secs_delay).await;
+        let (raw_transactions, times) =
+            raw_cache.get_raws(*timestamp_last_block.read().await).await;
         if raw_transactions.is_empty() {
             sleep(Duration::from_secs(1)).await;
             continue;
