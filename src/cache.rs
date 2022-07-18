@@ -27,7 +27,10 @@ impl RawCache {
         self.0.write().await.push(raw);
     }
 
-    pub async fn get_raws(&self, last_timestamp_block: i32) -> (Vec<RawTransaction>, Vec<(i32, i64)>) {
+    pub async fn get_raws(
+        &self,
+        last_timestamp_block: i32,
+    ) -> (Vec<RawTransaction>, Vec<(i32, i64)>) {
         let mut lock = self.0.write().await;
 
         let (res, cache) =
@@ -50,7 +53,7 @@ impl RawCache {
                 Ordering::Equal => x.data.lt.cmp(&y.data.lt),
                 Ordering::Greater => Ordering::Greater,
             })
-            .fold((vec![], vec![]), |(mut raws, mut times), x|  {
+            .fold((vec![], vec![]), |(mut raws, mut times), x| {
                 times.push((x.data.now as i32, x.data.lt as i64));
                 raws.push(x);
                 (raws, times)

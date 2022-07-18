@@ -62,9 +62,9 @@ pub fn test_from_raw_transactions(
     let (functions, events) = from_any_extractable_to_functions_events(events_to_parse);
 
     let parser = TransactionParser::builder()
-        .function_in_list(&functions, false)
-        .functions_out_list(&functions, false)
-        .events_list(&events)
+        .function_in_list(functions.clone(), false)
+        .functions_out_list(functions, false)
+        .events_list(events)
         .build()
         .unwrap();
 
@@ -104,9 +104,9 @@ async fn parse_kafka_transactions(
     let (functions, events) = from_any_extractable_to_functions_events(config.events_to_parse);
 
     let parser = TransactionParser::builder()
-        .function_in_list(&functions, false)
-        .functions_out_list(&functions, false)
-        .events_list(&events)
+        .function_in_list(functions.clone(), false)
+        .functions_out_list(functions, false)
+        .events_list(events)
         .build()
         .unwrap();
 
@@ -332,9 +332,9 @@ pub fn extract_events(
     let (functions, events) = from_any_extractable_to_functions_events(events.to_vec());
 
     let parser = TransactionParser::builder()
-        .function_in_list(&functions, false)
-        .functions_out_list(&functions, false)
-        .events_list(&events)
+        .function_in_list(functions.clone(), false)
+        .functions_out_list(functions, false)
+        .events_list(events)
         .build()
         .unwrap();
 
