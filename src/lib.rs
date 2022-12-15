@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Notify, RwLock};
 use tokio::time::sleep;
-use ton_block::{GetRepresentationHash, TrComputePhase, Transaction};
+use ton_block::{GetRepresentationHash, Transaction};
 use ton_types::UInt256;
 use transaction_consumer::StreamFrom;
 
@@ -369,18 +369,7 @@ pub fn from_vec_extracted_to_any_extractable_output(
         return None;
     }
 
-    if let Ok(true) = tx.read_description().map(|x| {
-        if !x.is_aborted() {
-            true
-        } else {
-            x.compute_phase_ref()
-                .map(|x| match x {
-                    TrComputePhase::Vm(x) => x.exit_code == 60,
-                    TrComputePhase::Skipped(_) => false,
-                })
-                .unwrap_or(false)
-        }
-    }) {
+    if let Ok(false) = tx.read_description().map(|x| x.is_aborted()) {
     } else {
         return None;
     }
