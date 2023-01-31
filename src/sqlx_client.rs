@@ -17,10 +17,10 @@ const COUNT_RAW_NOT_PROCESSED_TRANSACTION_QUERY: &str =
 
 const GET_AND_UPDATE_RAW_TRANSACTIONS_QUERY: &str = "UPDATE raw_transactions
 SET processed = true
-WHERE (timestamp_block, timestamp_lt) IN (SELECT timestamp_block, timestamp_lt
+WHERE (transaction_hash) IN (SELECT transaction_hash
                                           FROM raw_transactions
                                           WHERE timestamp_block < $1 AND processed = false
-                                          ORDER BY (timestamp_block, timestamp_lt)
+                                          ORDER BY timestamp_block, timestamp_lt
                                           LIMIT $2)
 returning *;";
 
@@ -267,18 +267,20 @@ pub async fn update_raw_transactions_set_processed_true(
 
 #[cfg(test)]
 mod test {
-    use sqlx::PgPool;
-    use crate::{insert_raw_transactions, update_raw_transactions_set_processed_true};
     use crate::models::RawTransactionFromDb;
+    use crate::{insert_raw_transactions, update_raw_transactions_set_processed_true};
+    use sqlx::PgPool;
 
     #[tokio::test]
     async fn test_insert() {
-        let pg_pool =
-            PgPool::connect("postgresql://postgres:postgres@localhost:5432/test_base")
-                .await
-                .unwrap();
+        let pg_pool = PgPool::connect("postgresql://postgres:postgres@localhost:5432/test_base")
+            .await
+            .unwrap();
 
-        let times = (vec![(1656071372, 27915771000001_i64), (1656070201, 27915328000006)]);
+        let times = (vec![
+            (1656071372, 27915771000001_i64),
+            (1656070201, 27915328000006),
+        ]);
         update_raw_transactions_set_processed_true(&pg_pool, times).await;
     }
 }
