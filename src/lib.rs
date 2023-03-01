@@ -208,13 +208,13 @@ async fn parse_kafka_transactions(
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_timestamp = transaction.now;
         *timestamp_last_block.write().await = transaction_timestamp as i32;
-        *time.write().await = 0;
         if buff_extract_events(&transaction, transaction.hash().unwrap(), &parser).is_some() {
             insert_raw_transaction(transaction.clone().into(), &config.pg_pool)
                 .await
                 .expect("cant insert raw_transaction to db");
             raw_cache.insert_raw(transaction.into()).await;
         }
+        *time.write().await = 0;
 
         produced_transaction.commit().expect("dead stream kafka");
 
