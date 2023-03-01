@@ -47,7 +47,6 @@ impl RawCache {
                 });
 
         *lock = cache;
-        *timer.write().await = 0;
 
         res.into_iter()
             .sorted_by(|x, y| match x.data.now.cmp(&y.data.now) {
