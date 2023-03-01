@@ -15,6 +15,7 @@ pub struct BufferedConsumerConfig {
     pub events_to_parse: Vec<AnyExtractable>,
     pub buff_size: i64,
     pub commit_time_secs: i32,
+    pub cache_timer: i32,
 }
 
 impl BufferedConsumerConfig {
@@ -24,6 +25,7 @@ impl BufferedConsumerConfig {
         events_to_parse: Vec<AnyExtractable>,
         buff_size: i64,
         commit_time_secs: i32,
+        cache_timer: i32,
     ) -> Self {
         Self {
             transaction_consumer,
@@ -31,6 +33,7 @@ impl BufferedConsumerConfig {
             events_to_parse,
             buff_size,
             commit_time_secs,
+            cache_timer,
         }
     }
 }

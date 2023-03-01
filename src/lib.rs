@@ -83,6 +83,7 @@ pub fn test_from_raw_transactions(
         RawCache::new(),
         timestamp_last_block,
         time,
+        2,
     ));
     BufferedConsumerChannels {
         rx_parsed_events,
@@ -193,6 +194,7 @@ async fn parse_kafka_transactions(
             raw_cache,
             timestamp_last_block,
             timer,
+            config.cache_timer,
         ));
     }
 
@@ -207,13 +209,15 @@ async fn parse_kafka_transactions(
         i += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_timestamp = transaction.now;
-        *timestamp_last_block.write().await = transaction_timestamp as i32;
+
         if buff_extract_events(&transaction, transaction.hash().unwrap(), &parser).is_some() {
             insert_raw_transaction(transaction.clone().into(), &config.pg_pool)
                 .await
                 .expect("cant insert raw_transaction to db");
             raw_cache.insert_raw(transaction.into()).await;
         }
+
+        *timestamp_last_block.write().await = transaction_timestamp as i32;
         *time.write().await = 0;
 
         produced_transaction.commit().expect("dead stream kafka");
@@ -238,7 +242,8 @@ async fn parse_raw_transaction(
     mut commit_rx: Receiver<()>,
     raw_cache: RawCache,
     timestamp_last_block: Arc<RwLock<i32>>,
-    timer: Arc<RwLock<i32>>
+    timer: Arc<RwLock<i32>>,
+    cache_timer: i32,
 ) {
     let count_not_processed = get_count_not_processed_raw_transactions(&pg_pool).await;
     let mut i: i64 = 0;
@@ -293,7 +298,7 @@ async fn parse_raw_transaction(
 
     loop {
         let (raw_transactions, times) =
-            raw_cache.get_raws(*timestamp_last_block.read().await, timer.clone()).await;
+            raw_cache.get_raws(*timestamp_last_block.read().await, timer.clone(), cache_timer).await;
 
         if raw_transactions.is_empty() {
             sleep(Duration::from_secs(1)).await;

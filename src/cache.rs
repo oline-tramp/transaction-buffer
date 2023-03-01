@@ -31,6 +31,7 @@ impl RawCache {
         &self,
         last_timestamp_block: i32,
         timer: Arc<RwLock<i32>>,
+        cache_timer: i32,
     ) -> (Vec<RawTransaction>, Vec<(i32, i64)>) {
         let mut lock = self.0.write().await;
         let time = *timer.read().await;
@@ -38,7 +39,7 @@ impl RawCache {
             lock.drain(..)
                 .into_iter()
                 .fold((vec![], vec![]), |(mut res, mut cache), x| {
-                    if (x.data.now as i32) < last_timestamp_block || time > 5 {
+                    if (x.data.now as i32) < last_timestamp_block || time >= cache_timer {
                         res.push(x)
                     } else {
                         cache.push(x)
