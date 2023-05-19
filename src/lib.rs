@@ -24,6 +24,20 @@ use tokio::time::sleep;
 use ton_block::{TrComputePhase, Transaction};
 use transaction_consumer::StreamFrom;
 
+fn split_any_extractable(
+    any_extractable: Vec<AnyExtractable>,
+) -> (Vec<ton_abi::Function>, Vec<ton_abi::Event>) {
+    let mut functions = Vec::new();
+    let mut events = Vec::new();
+    for any_extractable in any_extractable {
+        match any_extractable {
+            AnyExtractable::Function(function) => functions.push(function),
+            AnyExtractable::Event(event) => events.push(event),
+        }
+    }
+    (functions, events)
+}
+
 #[allow(clippy::type_complexity)]
 pub fn start_parsing_and_get_channels(config: BufferedConsumerConfig) -> BufferedConsumerChannels {
     let (tx_parsed_events, rx_parsed_events) = futures::channel::mpsc::channel(1);
@@ -48,12 +62,13 @@ pub fn start_parsing_and_get_channels(config: BufferedConsumerConfig) -> Buffere
 
 pub fn test_from_raw_transactions(
     pg_pool: PgPool,
-    events: Vec<ton_abi::Event>,
-    functions: Vec<ton_abi::Function>,
+    any_extractable: Vec<AnyExtractable>,
 ) -> BufferedConsumerChannels {
     let (tx_parsed_events, rx_parsed_events) = futures::channel::mpsc::channel(1);
     let (tx_commit, rx_commit) = futures::channel::mpsc::channel(1);
     let notify_for_services = Arc::new(Notify::new());
+
+    let (functions, events, ) = split_any_extractable(any_extractable);
 
     let parser = TransactionParser::builder()
         .function_in_list(functions.clone(), false)
@@ -101,11 +116,12 @@ async fn parse_kafka_transactions(
     commit_rx: Receiver<()>,
 ) {
     create_table_raw_transactions(&config.pg_pool).await;
+    let (functions, events) = split_any_extractable(config.any_extractable.clone());
 
     let parser = TransactionParser::builder()
-        .function_in_list(config.functions.clone(), false)
-        .functions_out_list(config.functions.clone(), false)
-        .events_list(config.events.clone())
+        .function_in_list(functions.clone(), false)
+        .functions_out_list(functions, false)
+        .events_list(events)
         .build()
         .unwrap();
 
@@ -385,6 +401,12 @@ pub fn filter_extracted(
         return None;
     }
     Some(extracted.into_iter().map(|x| x.into_owned()).collect())
+}
+
+#[derive(Debug, Clone)]
+pub enum AnyExtractable {
+    Event(ton_abi::Event),
+    Function(ton_abi::Function)
 }
 
 #[cfg(test)]

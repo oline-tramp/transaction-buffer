@@ -8,12 +8,12 @@ use tokio::sync::Notify;
 use ton_block::{Deserializable, GetRepresentationHash, Serializable, Transaction};
 use ton_types::UInt256;
 use transaction_consumer::TransactionConsumer;
+use crate::AnyExtractable;
 
 pub struct BufferedConsumerConfig {
     pub transaction_consumer: Arc<TransactionConsumer>,
     pub pg_pool: PgPool,
-    pub events: Vec<ton_abi::Event>,
-    pub functions: Vec<ton_abi::Function>,
+    pub any_extractable: Vec<AnyExtractable>,
     pub buff_size: i64,
     pub commit_time_secs: i32,
     pub cache_timer: i32,
@@ -23,8 +23,7 @@ impl BufferedConsumerConfig {
     pub fn new(
         transaction_consumer: Arc<TransactionConsumer>,
         pg_pool: PgPool,
-        events: Vec<ton_abi::Event>,
-        functions: Vec<ton_abi::Function>,
+        any_extractable: Vec<AnyExtractable>,
         buff_size: i64,
         commit_time_secs: i32,
         cache_timer: i32,
@@ -32,8 +31,7 @@ impl BufferedConsumerConfig {
         Self {
             transaction_consumer,
             pg_pool,
-            events,
-            functions,
+            any_extractable,
             buff_size,
             commit_time_secs,
             cache_timer,
