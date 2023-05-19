@@ -14,19 +14,14 @@ use chrono::NaiveDateTime;
 use futures::channel::mpsc::{Receiver, Sender};
 use futures::SinkExt;
 use futures::StreamExt;
-use indexer_lib::AnyExtractableOutput::{Event, Function};
-use indexer_lib::{
-    AnyExtractable, AnyExtractableOutput, ParsedEvent, ParsedFunction, ParsedMessage, ParsedOutput,
-};
-use nekoton_abi::transaction_parser::{Extracted, ParsedType};
+use nekoton_abi::transaction_parser::{Extracted, ExtractedOwned, ParsedType};
 use nekoton_abi::TransactionParser;
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Notify, RwLock};
 use tokio::time::sleep;
-use ton_block::{GetRepresentationHash, TrComputePhase, Transaction};
-use ton_types::UInt256;
+use ton_block::{TrComputePhase, Transaction};
 use transaction_consumer::StreamFrom;
 
 #[allow(clippy::type_complexity)]
@@ -53,12 +48,12 @@ pub fn start_parsing_and_get_channels(config: BufferedConsumerConfig) -> Buffere
 
 pub fn test_from_raw_transactions(
     pg_pool: PgPool,
-    events_to_parse: Vec<AnyExtractable>,
+    events: Vec<ton_abi::Event>,
+    functions: Vec<ton_abi::Function>,
 ) -> BufferedConsumerChannels {
     let (tx_parsed_events, rx_parsed_events) = futures::channel::mpsc::channel(1);
     let (tx_commit, rx_commit) = futures::channel::mpsc::channel(1);
     let notify_for_services = Arc::new(Notify::new());
-    let (functions, events) = from_any_extractable_to_functions_events(events_to_parse);
 
     let parser = TransactionParser::builder()
         .function_in_list(functions.clone(), false)
@@ -101,17 +96,16 @@ async fn timer(time: Arc<RwLock<i32>>) {
 #[allow(clippy::too_many_arguments)]
 async fn parse_kafka_transactions(
     config: BufferedConsumerConfig,
-    tx_parsed_events: Sender<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
+    tx_parsed_events: Sender<Vec<(Vec<ExtractedOwned>, RawTransaction)>>,
     notify_for_services: Arc<Notify>,
     commit_rx: Receiver<()>,
 ) {
     create_table_raw_transactions(&config.pg_pool).await;
-    let (functions, events) = from_any_extractable_to_functions_events(config.events_to_parse);
 
     let parser = TransactionParser::builder()
-        .function_in_list(functions.clone(), false)
-        .functions_out_list(functions, false)
-        .events_list(events)
+        .function_in_list(config.functions.clone(), false)
+        .functions_out_list(config.functions.clone(), false)
+        .events_list(config.events.clone())
         .build()
         .unwrap();
 
@@ -144,7 +138,7 @@ async fn parse_kafka_transactions(
         let transaction_time = transaction.now() as i64;
         *timestamp_last_block.write().await = transaction_time as i32;
 
-        if buff_extract_events(&transaction, transaction.hash().unwrap(), &parser).is_some() {
+        if buff_extracted_events(&transaction, &parser).is_some() {
             raw_transactions.push(transaction.into());
         }
 
@@ -209,7 +203,7 @@ async fn parse_kafka_transactions(
         let transaction: Transaction = produced_transaction.transaction.clone();
         let transaction_timestamp = transaction.now;
 
-        if buff_extract_events(&transaction, transaction.hash().unwrap(), &parser).is_some() {
+        if buff_extracted_events(&transaction, &parser).is_some() {
             insert_raw_transaction(transaction.clone().into(), &config.pg_pool)
                 .await
                 .expect("cant insert raw_transaction to db");
@@ -235,7 +229,7 @@ async fn parse_kafka_transactions(
 #[allow(clippy::too_many_arguments)]
 async fn parse_raw_transaction(
     parser: TransactionParser,
-    mut tx: Sender<Vec<(ParsedOutput<AnyExtractableOutput>, RawTransaction)>>,
+    mut tx: Sender<Vec<(Vec<ExtractedOwned>, RawTransaction)>>,
     notify: Arc<Notify>,
     pg_pool: PgPool,
     mut commit_rx: Receiver<()>,
@@ -273,7 +267,7 @@ async fn parse_raw_transaction(
             };
 
             if let Some(events) =
-                buff_extract_events(&raw_transaction.data, raw_transaction.hash, &parser)
+                buff_extracted_events(&raw_transaction.data, &parser)
             {
                 send_message.push((events, raw_transaction));
             };
@@ -312,7 +306,7 @@ async fn parse_raw_transaction(
         let mut send_message = vec![];
         for raw_transaction in raw_transactions {
             if let Some(events) =
-                buff_extract_events(&raw_transaction.data, raw_transaction.hash, &parser)
+                buff_extracted_events(&raw_transaction.data, &parser)
             {
                 send_message.push((events, raw_transaction));
             };
@@ -327,30 +321,11 @@ async fn parse_raw_transaction(
     }
 }
 
-pub fn from_any_extractable_to_functions_events(
-    events: Vec<AnyExtractable>,
-) -> (Vec<ton_abi::Function>, Vec<ton_abi::Event>) {
-    let (mut funs, mut events) = events.into_iter().fold((vec![], vec![]), |mut res, x| {
-        match x {
-            AnyExtractable::Function(x) => res.0.push(x),
-            AnyExtractable::Event(y) => res.1.push(y),
-        };
-        res
-    });
-    funs.sort_by_key(|x| x.get_function_id());
-    funs.dedup_by(|x, y| x.get_function_id() == y.get_function_id());
-    events.sort_by(|x, y| x.id.cmp(&y.id));
-    events.dedup_by(|x, y| x.id == y.id);
-    (funs, events)
-}
-
 pub fn extract_events(
     data: &Transaction,
-    hash: UInt256,
-    events: &[AnyExtractable],
-) -> Option<ParsedOutput<AnyExtractableOutput>> {
-    let (functions, events) = from_any_extractable_to_functions_events(events.to_vec());
-
+    events: Vec<ton_abi::Event>,
+    functions: Vec<ton_abi::Function>,
+) -> Option<Vec<ExtractedOwned>> {
     let parser = TransactionParser::builder()
         .function_in_list(functions.clone(), false)
         .functions_out_list(functions, false)
@@ -360,31 +335,29 @@ pub fn extract_events(
 
     if let Ok(extracted) = parser.parse(data) {
         if !extracted.is_empty() {
-            return from_vec_extracted_to_any_extractable_output(extracted, hash, data.clone());
+            return filter_extracted(extracted, data.clone());
         }
     }
 
     None
 }
 
-pub fn buff_extract_events(
+pub fn buff_extracted_events(
     data: &Transaction,
-    hash: UInt256,
     parser: &TransactionParser,
-) -> Option<ParsedOutput<AnyExtractableOutput>> {
+) -> Option<Vec<ExtractedOwned>> {
     if let Ok(extracted) = parser.parse(data) {
         if !extracted.is_empty() {
-            return from_vec_extracted_to_any_extractable_output(extracted, hash, data.clone());
+            return filter_extracted(extracted, data.clone());
         }
     }
     None
 }
 
-pub fn from_vec_extracted_to_any_extractable_output(
-    extracted: Vec<Extracted>,
-    tx_hash: UInt256,
+pub fn filter_extracted(
+    mut extracted: Vec<Extracted>,
     tx: Transaction,
-) -> Option<ParsedOutput<AnyExtractableOutput>> {
+) -> Option<Vec<ExtractedOwned>> {
     if extracted.is_empty() {
         return None;
     }
@@ -405,57 +378,18 @@ pub fn from_vec_extracted_to_any_extractable_output(
         return None;
     }
 
-    let mut res = ParsedOutput {
-        transaction: tx,
-        hash: tx_hash,
-        output: vec![],
-    };
+    #[allow(clippy::nonminimal_bool)]
+    extracted.retain(|x| !(x.parsed_type != ParsedType::Event && !x.is_in_message));
 
-    for x in extracted {
-        if x.parsed_type != ParsedType::Event && !x.is_in_message {
-            continue;
-        }
-
-        let any_extractable = match x.parsed_type {
-            ParsedType::FunctionInput => Function(ParsedFunction {
-                function_name: x.name.to_string(),
-                function_id: x.function_id,
-                input: Some(ParsedMessage {
-                    tokens: x.tokens,
-                    hash: <[u8; 32]>::try_from(x.message.hash().unwrap().into_vec()).unwrap(),
-                }),
-                output: None,
-            }),
-            ParsedType::FunctionOutput => Function(ParsedFunction {
-                function_name: x.name.to_string(),
-                function_id: x.function_id,
-                input: None,
-                output: Some(ParsedMessage {
-                    tokens: x.tokens,
-                    hash: <[u8; 32]>::try_from(x.message.hash().unwrap().into_vec()).unwrap(),
-                }),
-            }),
-            ParsedType::Event => Event(ParsedEvent {
-                function_name: x.name.to_string(),
-                event_id: x.function_id,
-                input: Some(x.tokens).unwrap_or_default(),
-                message_hash: <[u8; 32]>::try_from(x.message.hash().unwrap().into_vec()).unwrap(),
-            }),
-            ParsedType::BouncedFunction => continue,
-        };
-        res.output.push(any_extractable);
-    }
-
-    if res.output.is_empty() {
+    if extracted.is_empty() {
         return None;
     }
-
-    Some(res)
+    Some(extracted.into_iter().map(|x| x.into_owned()).collect())
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{extract_events, from_vec_extracted_to_any_extractable_output};
+    use crate::{extract_events, filter_extracted};
     use nekoton_abi::TransactionParser;
     use ton_block::{Deserializable, GetRepresentationHash};
 
@@ -475,7 +409,7 @@ mod test {
             .unwrap();
         let test = parser.parse(&tx).unwrap();
         let test1 =
-            from_vec_extracted_to_any_extractable_output(test, tx.hash().unwrap(), tx.clone())
+            filter_extracted(test, tx.hash().unwrap(), tx.clone())
                 .unwrap();
         dbg!(test1);
     }
