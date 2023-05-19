@@ -37,11 +37,18 @@ pub fn split_any_extractable(
             AnyExtractable::Event(event) => events.push(event),
         }
     }
+
+    functions.sort_by_key(|x| x.get_function_id());
+    functions.dedup_by(|x, y| x.get_function_id() == y.get_function_id());
+    events.sort_by(|x, y| x.id.cmp(&y.id));
+    events.dedup_by(|x, y| x.id == y.id);
+
     (functions, events)
 }
 
 pub fn create_transaction_parser(any_extractable: Vec<AnyExtractable>) -> TransactionParser {
     let (functions, events) = split_any_extractable(any_extractable);
+
     TransactionParser::builder()
         .function_in_list(functions.clone(), false)
         .functions_out_list(functions, false)
