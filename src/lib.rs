@@ -354,22 +354,13 @@ async fn parse_raw_transaction(
 
 pub fn extract_events(
     data: &Transaction,
-    events: Vec<ton_abi::Event>,
-    functions: Vec<ton_abi::Function>,
+    parser: &TransactionParser,
 ) -> Option<Vec<ExtractedOwned>> {
-    let parser = TransactionParser::builder()
-        .function_in_list(functions.clone(), false)
-        .functions_out_list(functions, false)
-        .events_list(events)
-        .build()
-        .unwrap();
-
     if let Ok(extracted) = parser.parse(data) {
         if !extracted.is_empty() {
             return filter_extracted(extracted, data.clone());
         }
     }
-
     None
 }
 
