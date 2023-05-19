@@ -4,7 +4,9 @@ pub mod models;
 mod sqlx_client;
 
 use crate::cache::RawCache;
-use crate::models::{AnyExtractable, BufferedConsumerChannels, BufferedConsumerConfig, RawTransaction};
+use crate::models::{
+    AnyExtractable, BufferedConsumerChannels, BufferedConsumerConfig, RawTransaction,
+};
 use crate::sqlx_client::{
     create_table_raw_transactions, get_count_not_processed_raw_transactions,
     get_count_raw_transactions, get_raw_transactions, insert_raw_transaction,
@@ -36,6 +38,16 @@ pub fn split_any_extractable(
         }
     }
     (functions, events)
+}
+
+pub fn create_transaction_parser(any_extractable: Vec<AnyExtractable>) -> TransactionParser {
+    let (functions, events) = split_any_extractable(any_extractable);
+    TransactionParser::builder()
+        .function_in_list(functions.clone(), false)
+        .functions_out_list(functions, false)
+        .events_list(events)
+        .build()
+        .unwrap()
 }
 
 pub fn split_extracted_owned(
