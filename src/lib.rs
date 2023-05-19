@@ -17,7 +17,6 @@ use futures::StreamExt;
 use indexer_lib::AnyExtractableOutput::{Event, Function};
 use indexer_lib::{
     AnyExtractable, AnyExtractableOutput, ParsedEvent, ParsedFunction, ParsedMessage, ParsedOutput,
-    TransactionExt,
 };
 use nekoton_abi::transaction_parser::{Extracted, ParsedType};
 use nekoton_abi::TransactionParser;
@@ -142,7 +141,7 @@ async fn parse_kafka_transactions(
     while let Some(produced_transaction) = stream_transactions.next().await {
         count += 1;
         let transaction: Transaction = produced_transaction.transaction.clone();
-        let transaction_time = transaction.time() as i64;
+        let transaction_time = transaction.now() as i64;
         *timestamp_last_block.write().await = transaction_time as i32;
 
         if buff_extract_events(&transaction, transaction.hash().unwrap(), &parser).is_some() {
@@ -297,8 +296,13 @@ async fn parse_raw_transaction(
     raw_cache.fill_raws(&pg_pool).await;
 
     loop {
-        let (raw_transactions, times) =
-            raw_cache.get_raws(*timestamp_last_block.read().await, timer.clone(), cache_timer).await;
+        let (raw_transactions, times) = raw_cache
+            .get_raws(
+                *timestamp_last_block.read().await,
+                timer.clone(),
+                cache_timer,
+            )
+            .await;
 
         if raw_transactions.is_empty() {
             sleep(Duration::from_secs(1)).await;

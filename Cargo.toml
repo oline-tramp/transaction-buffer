@@ -1,6 +1,6 @@
 [package]
 name = "transaction-buffer"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -21,6 +21,6 @@ nekoton-abi = { git = "https://github.com/broxus/nekoton.git" }
 ton_abi = { git = "https://github.com/broxus/ton-labs-abi.git" }
 
 [dev-dependencies]
-env_logger = "0.8.4"
+env_logger = "0.10.0"
 env-file-reader = "0.3.0"
 
