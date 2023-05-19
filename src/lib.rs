@@ -38,6 +38,25 @@ fn split_any_extractable(
     (functions, events)
 }
 
+pub fn split_extracted_owned(
+    extracted: Vec<ExtractedOwned>,
+) -> (Vec<ExtractedOwned>, Vec<ExtractedOwned>) // functions, events
+{
+    let mut functions = Vec::new();
+    let mut events = Vec::new();
+
+    for extracted_owned in extracted {
+        match extracted_owned.parsed_type {
+            ParsedType::FunctionInput
+            | ParsedType::FunctionOutput
+            | ParsedType::BouncedFunction => functions.push(extracted_owned),
+            ParsedType::Event => events.push(extracted_owned),
+        }
+    }
+
+    (functions, events)
+}
+
 #[allow(clippy::type_complexity)]
 pub fn start_parsing_and_get_channels(config: BufferedConsumerConfig) -> BufferedConsumerChannels {
     let (tx_parsed_events, rx_parsed_events) = futures::channel::mpsc::channel(1);
@@ -68,7 +87,7 @@ pub fn test_from_raw_transactions(
     let (tx_commit, rx_commit) = futures::channel::mpsc::channel(1);
     let notify_for_services = Arc::new(Notify::new());
 
-    let (functions, events, ) = split_any_extractable(any_extractable);
+    let (functions, events) = split_any_extractable(any_extractable);
 
     let parser = TransactionParser::builder()
         .function_in_list(functions.clone(), false)
@@ -282,9 +301,7 @@ async fn parse_raw_transaction(
                 }
             };
 
-            if let Some(events) =
-                buff_extracted_events(&raw_transaction.data, &parser)
-            {
+            if let Some(events) = buff_extracted_events(&raw_transaction.data, &parser) {
                 send_message.push((events, raw_transaction));
             };
         }
@@ -321,9 +338,7 @@ async fn parse_raw_transaction(
 
         let mut send_message = vec![];
         for raw_transaction in raw_transactions {
-            if let Some(events) =
-                buff_extracted_events(&raw_transaction.data, &parser)
-            {
+            if let Some(events) = buff_extracted_events(&raw_transaction.data, &parser) {
                 send_message.push((events, raw_transaction));
             };
         }
@@ -406,7 +421,7 @@ pub fn filter_extracted(
 #[derive(Debug, Clone)]
 pub enum AnyExtractable {
     Event(ton_abi::Event),
-    Function(ton_abi::Function)
+    Function(ton_abi::Function),
 }
 
 #[cfg(test)]
@@ -430,9 +445,7 @@ mod test {
             .build()
             .unwrap();
         let test = parser.parse(&tx).unwrap();
-        let test1 =
-            filter_extracted(test, tx.hash().unwrap(), tx.clone())
-                .unwrap();
+        let test1 = filter_extracted(test, tx.hash().unwrap(), tx.clone()).unwrap();
         dbg!(test1);
     }
 }
