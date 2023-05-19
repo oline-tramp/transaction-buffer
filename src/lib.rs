@@ -24,7 +24,7 @@ use tokio::time::sleep;
 use ton_block::{TrComputePhase, Transaction};
 use transaction_consumer::StreamFrom;
 
-fn split_any_extractable(
+pub fn split_any_extractable(
     any_extractable: Vec<AnyExtractable>,
 ) -> (Vec<ton_abi::Function>, Vec<ton_abi::Event>) {
     let mut functions = Vec::new();
