@@ -8,7 +8,6 @@ use tokio::sync::Notify;
 use ton_block::{Deserializable, GetRepresentationHash, Serializable, Transaction};
 use ton_types::UInt256;
 use transaction_consumer::TransactionConsumer;
-use crate::AnyExtractable;
 
 pub struct BufferedConsumerConfig {
     pub transaction_consumer: Arc<TransactionConsumer>,
@@ -17,6 +16,12 @@ pub struct BufferedConsumerConfig {
     pub buff_size: i64,
     pub commit_time_secs: i32,
     pub cache_timer: i32,
+}
+
+#[derive(Debug, Clone)]
+pub enum AnyExtractable {
+    Event(ton_abi::Event),
+    Function(ton_abi::Function),
 }
 
 impl BufferedConsumerConfig {

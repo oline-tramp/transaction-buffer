@@ -4,7 +4,7 @@ pub mod models;
 mod sqlx_client;
 
 use crate::cache::RawCache;
-use crate::models::{BufferedConsumerChannels, BufferedConsumerConfig, RawTransaction};
+use crate::models::{AnyExtractable, BufferedConsumerChannels, BufferedConsumerConfig, RawTransaction};
 use crate::sqlx_client::{
     create_table_raw_transactions, get_count_not_processed_raw_transactions,
     get_count_raw_transactions, get_raw_transactions, insert_raw_transaction,
@@ -416,12 +416,6 @@ pub fn filter_extracted(
         return None;
     }
     Some(extracted.into_iter().map(|x| x.into_owned()).collect())
-}
-
-#[derive(Debug, Clone)]
-pub enum AnyExtractable {
-    Event(ton_abi::Event),
-    Function(ton_abi::Function),
 }
 
 #[cfg(test)]
